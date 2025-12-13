@@ -487,10 +487,10 @@ else:
         with tab7:
             st.header(f"🎯 BENCHMARK ({st.session_state.benchmark})")
             if benchmark_returns is not None and len(benchmark_returns) > 0:
-                bench_cumret = (1 + benchmark_returns).prod() - 1
+                bench_cumret = float((1 + benchmark_returns).prod() - 1)
                 n_yrs = len(benchmark_returns) / 252
-                bench_annret = (1 + bench_cumret)**(1/n_yrs) - 1 if n_yrs > 0 else 0
-                bench_vol = benchmark_returns.std() * np.sqrt(252)
+                bench_annret = float((1 + bench_cumret)**(1/n_yrs) - 1) if n_yrs > 0 else 0
+                bench_vol = float(benchmark_returns.std() * np.sqrt(252))
                 bench_sharpe = (bench_annret - risk_free_rate) / bench_vol if bench_vol > 0 else 0
                 
                 bcols = st.columns(4)
