@@ -1,4 +1,4 @@
-"""Portfolio Analyzer Pro - Streamlit Cloud Ready - v4.0"""
+"""Portfolio Analyzer Pro - v5.0 with Deep-dive Statistics"""
 
 import streamlit as st
 import pandas as pd
@@ -9,6 +9,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import json
 import warnings
+from scipy import stats
 
 warnings.filterwarnings('ignore')
 
@@ -24,9 +25,16 @@ try:
 except ImportError:
     OPENPYXL_AVAILABLE = False
 
+# Try to import arch for GARCH
+try:
+    from arch import arch_model
+    ARCH_AVAILABLE = True
+except ImportError:
+    ARCH_AVAILABLE = False
+
 st.set_page_config(page_title="Portfolio Analyzer Pro", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 
-# CSS Styling - Clean and Mobile Friendly
+# CSS Styling
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
@@ -50,7 +58,6 @@ st.markdown("""
     border-right: 1px solid var(--border-color);
 }
 
-/* Main button styling - viola con testo bianco leggibile */
 .stButton > button {
     width: 100%;
     background: var(--accent-gradient) !important;
@@ -70,11 +77,6 @@ st.markdown("""
     color: #ffffff !important;
 }
 
-.stButton > button:active {
-    color: #ffffff !important;
-}
-
-/* Form submit button - stesso stile viola */
 .stFormSubmitButton > button {
     background: var(--accent-gradient) !important;
     color: #ffffff !important;
@@ -84,16 +86,6 @@ st.markdown("""
     border-radius: 12px;
 }
 
-.stFormSubmitButton > button:hover {
-    filter: brightness(1.15);
-    color: #ffffff !important;
-}
-
-.stFormSubmitButton > button span {
-    color: #ffffff !important;
-}
-
-/* Dashboard cards */
 .dashboard-card {
     background: linear-gradient(145deg, var(--bg-card) 0%, var(--bg-secondary) 100%);
     padding: 1.5rem;
@@ -118,9 +110,6 @@ st.markdown("""
     font-size: 0.9rem;
 }
 
-.dashboard-card li { margin-bottom: 0.3rem; }
-
-/* Ticker pills */
 .ticker-pill {
     display: inline-block;
     background: var(--accent-gradient);
@@ -132,7 +121,6 @@ st.markdown("""
     font-weight: 600;
 }
 
-/* Metrics */
 [data-testid="stMetricValue"] {
     background: var(--accent-gradient);
     -webkit-background-clip: text;
@@ -149,7 +137,6 @@ st.markdown("""
     font-size: 0.7rem !important;
 }
 
-/* Headers */
 h1 {
     background: var(--accent-gradient);
     -webkit-background-clip: text;
@@ -169,14 +156,9 @@ h2 {
     margin-bottom: 1rem;
 }
 
-h3, h4 {
-    color: var(--accent-primary) !important;
-    font-weight: 600;
-}
-
+h3, h4 { color: var(--accent-primary) !important; font-weight: 600; }
 p, li, span, label { color: var(--text-secondary); }
 
-/* Tabs */
 .stTabs [data-baseweb="tab-list"] {
     background: var(--bg-card);
     border-radius: 12px;
@@ -198,11 +180,7 @@ p, li, span, label { color: var(--text-secondary); }
     color: white !important;
 }
 
-/* Hero section */
-.hero-section {
-    text-align: center;
-    padding: 1.5rem 0;
-}
+.hero-section { text-align: center; padding: 1.5rem 0; }
 
 .hero-title {
     font-size: 2rem;
@@ -229,7 +207,6 @@ p, li, span, label { color: var(--text-secondary); }
     border-radius: 2px;
 }
 
-/* Footer */
 .footer-section {
     text-align: center;
     padding: 1.5rem;
@@ -239,7 +216,6 @@ p, li, span, label { color: var(--text-secondary); }
     border: 1px solid var(--border-color);
 }
 
-/* Styled table */
 .styled-table {
     width: 100%;
     border-collapse: collapse;
@@ -270,45 +246,31 @@ p, li, span, label { color: var(--text-secondary); }
 .styled-table tr:hover { background: rgba(99,102,241,0.1); }
 .styled-table tr:last-child td { border-bottom: none; }
 
-/* Checkbox styling */
-.stCheckbox label {
-    color: var(--text-secondary) !important;
-    font-size: 0.9rem;
-}
+.stCheckbox label { color: var(--text-secondary) !important; font-size: 0.9rem; }
 
-/* Expander */
 .streamlit-expanderHeader {
     background: var(--bg-card) !important;
     border-radius: 8px;
     color: var(--text-primary) !important;
 }
 
-/* Selectbox, multiselect */
-.stSelectbox label, .stMultiSelect label {
-    color: var(--text-secondary) !important;
-}
-
-/* Info/Warning/Error boxes */
 .stAlert { border-radius: 8px; }
 
-/* Mobile responsive - hide some elements on small screens */
 @media screen and (max-width: 640px) {
     .hero-title { font-size: 1.5rem !important; }
     .hero-subtitle { font-size: 0.7rem; }
     .dashboard-card { padding: 1rem; }
-    .dashboard-card h3 { font-size: 0.95rem; }
     .styled-table { font-size: 0.7rem; }
     .styled-table th, .styled-table td { padding: 6px 4px; }
     h1 { font-size: 1.5rem !important; }
     h2 { font-size: 1.2rem !important; }
     [data-testid="stMetricValue"] { font-size: 1.2rem !important; }
-    [data-testid="stMetricLabel"] { font-size: 0.6rem !important; }
     .stTabs [data-baseweb="tab"] { font-size: 0.7rem; padding: 0.4rem 0.6rem; }
 }
 </style>
 """, unsafe_allow_html=True)
 
-# Ticker Database
+# Ticker Database - Updated with Commodities
 TICKER_INFO = {
     "AAPL": "Apple", "MSFT": "Microsoft", "GOOGL": "Alphabet (Google)", "AMZN": "Amazon",
     "META": "Meta (Facebook)", "NVDA": "NVIDIA", "AMD": "AMD", "INTC": "Intel",
@@ -346,8 +308,14 @@ TICKER_INFO = {
     "SHY": "iShares 1-3 Year Treasury", "AGG": "iShares Core US Aggregate",
     "BND": "Vanguard Total Bond", "LQD": "iShares Investment Grade Corp",
     "HYG": "iShares High Yield Corp", "TIP": "iShares TIPS Bond",
+    # Commodities - Updated
     "GLD": "SPDR Gold Shares", "IAU": "iShares Gold Trust", "SLV": "iShares Silver Trust",
     "GDX": "VanEck Gold Miners", "GDXJ": "VanEck Junior Gold Miners",
+    "USO": "United States Oil Fund", "UNG": "United States Natural Gas",
+    "DBA": "Invesco DB Agriculture", "DBC": "Invesco DB Commodity Index",
+    "PDBC": "Invesco Optimum Yield Diversified Commodity",
+    "CPER": "United States Copper Index", "WEAT": "Teucrium Wheat Fund",
+    "CORN": "Teucrium Corn Fund", "SOYB": "Teucrium Soybean Fund",
 }
 
 TICKER_DATABASE = {
@@ -361,46 +329,23 @@ TICKER_DATABASE = {
     "📈 ETF Sector": ["XLK","XLV","XLF","XLE","XLI","XLY","XLP","XLU","VNQ"],
     "💎 Crypto": ["BTC-USD","ETH-USD","BNB-USD","SOL-USD","ADA-USD","XRP-USD","DOGE-USD"],
     "🏛️ Bonds": ["TLT","IEF","SHY","AGG","BND","LQD","HYG","TIP"],
-    "💰 Gold": ["GLD","IAU","SLV","GDX","GDXJ"]
+    "🛢️ Commodities": ["GLD","IAU","SLV","GDX","GDXJ","USO","UNG","DBA","DBC","PDBC","CPER","WEAT","CORN","SOYB"]
 }
 
 def get_display_name(ticker):
     return TICKER_INFO.get(ticker, ticker)
 
-# Distinct Colors for charts
 CHART_COLORS = ['#FF6B6B','#4ECDC4','#FFE66D','#95E1D3','#F38181','#AA96DA','#FCBAD3','#A8D8EA','#FF9F43','#6C5CE7']
 
 def apply_plotly_theme(fig):
-    """Apply theme and remove any title that could show as undefined"""
     fig.update_layout(
-        title_text="",  # Empty string instead of None
-        title=dict(text=""),  # Explicitly set empty
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
+        title_text="", title=dict(text=""),
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
         font=dict(color='#E2E8F0', family='Inter', size=12),
-        legend=dict(
-            bgcolor='rgba(26,26,36,0.95)',
-            bordercolor='rgba(99,102,241,0.5)',
-            borderwidth=1,
-            font=dict(color='#F8FAFC', size=11)
-        ),
-        xaxis=dict(
-            gridcolor='rgba(99,102,241,0.15)',
-            linecolor='rgba(99,102,241,0.3)',
-            tickfont=dict(color='#E2E8F0', size=10),
-            title_font=dict(color='#E2E8F0', size=11)
-        ),
-        yaxis=dict(
-            gridcolor='rgba(99,102,241,0.15)',
-            linecolor='rgba(99,102,241,0.3)',
-            tickfont=dict(color='#E2E8F0', size=10),
-            title_font=dict(color='#E2E8F0', size=11)
-        ),
-        hoverlabel=dict(
-            bgcolor='#1E1E2E',
-            bordercolor='#6366F1',
-            font=dict(color='#F8FAFC', size=11)
-        ),
+        legend=dict(bgcolor='rgba(26,26,36,0.95)', bordercolor='rgba(99,102,241,0.5)', borderwidth=1, font=dict(color='#F8FAFC', size=11)),
+        xaxis=dict(gridcolor='rgba(99,102,241,0.15)', linecolor='rgba(99,102,241,0.3)', tickfont=dict(color='#E2E8F0', size=10)),
+        yaxis=dict(gridcolor='rgba(99,102,241,0.15)', linecolor='rgba(99,102,241,0.3)', tickfont=dict(color='#E2E8F0', size=10)),
+        hoverlabel=dict(bgcolor='#1E1E2E', bordercolor='#6366F1', font=dict(color='#F8FAFC', size=11)),
         margin=dict(t=20, b=40, l=50, r=20)
     )
     return fig
@@ -421,6 +366,60 @@ def create_styled_table(df, title=""):
     html += '</tbody></table></div>'
     return html
 
+# Deep-dive Statistics Functions
+def compute_autocorrelation(x, max_lag):
+    """Compute autocorrelation for lags 1 to max_lag"""
+    n = len(x)
+    x_centered = x - np.mean(x)
+    var_x = np.var(x)
+    acf = []
+    for lag in range(1, max_lag + 1):
+        if lag < n:
+            acf_val = np.sum(x_centered[lag:] * x_centered[:-lag]) / ((n - lag) * var_x)
+            acf.append(acf_val)
+        else:
+            acf.append(0)
+    return np.array(acf)
+
+def invariance_test_ellipsoid(eps, l_bar, conf_lev=0.95):
+    """
+    Perform ellipsoid test for invariance based on autocorrelations.
+    Returns autocorrelations, confidence intervals, and test result.
+    """
+    t_bar = len(eps)
+    acf = compute_autocorrelation(eps, l_bar)
+    
+    # Confidence interval (approximate)
+    conf_int = stats.norm.ppf((1 + conf_lev) / 2) / np.sqrt(t_bar)
+    
+    # Test: check if all autocorrelations are within confidence interval
+    test_passed = np.all(np.abs(acf) < conf_int)
+    
+    return acf, conf_int, test_passed
+
+def ks_test(eps):
+    """Perform Kolmogorov-Smirnov test for normality"""
+    # Standardize
+    eps_std = (eps - np.mean(eps)) / np.std(eps)
+    # KS test against standard normal
+    ks_stat, p_value = stats.kstest(eps_std, 'norm')
+    return ks_stat, p_value
+
+def fit_garch(returns):
+    """Fit GARCH(1,1) model and return parameters and residuals"""
+    if not ARCH_AVAILABLE:
+        return None, None, None
+    
+    try:
+        model = arch_model(returns, vol='garch', p=1, o=0, q=1, rescale=False)
+        result = model.fit(disp='off')
+        params = result.params
+        std_resid = result.std_resid
+        cond_vol = result.conditional_volatility
+        return params, std_resid, cond_vol
+    except:
+        return None, None, None
+
 # Session State
 defaults = {
     'analyzer': None, 'analysis_complete': False, 'selected_tickers': [],
@@ -430,7 +429,7 @@ defaults = {
 for key, val in defaults.items():
     if key not in st.session_state:
         st.session_state[key] = val
-# Part 2: Header and Sidebar (NO form - so Select All works)
+# Part 2: Header and Sidebar (NO Select All)
 
 # Header
 st.markdown("""
@@ -442,7 +441,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.markdown("---")
 
-# Sidebar - NO FORM so Select All can work
+# Sidebar
 with st.sidebar:
     st.markdown("## ⚙️ Configuration")
     
@@ -452,30 +451,20 @@ with st.sidebar:
     
     if selection_method == "📋 Database":
         st.markdown("#### 📚 Select Assets")
-        search_query = st.text_input("🔍 Search", placeholder="e.g., Apple, Tesla...", key="search")
+        search_query = st.text_input("🔍 Search", placeholder="e.g., Apple, Gold...", key="search")
         
         for category, tickers in TICKER_DATABASE.items():
             with st.expander(category, expanded=False):
-                # Filter
                 if search_query:
                     filtered = [t for t in tickers if search_query.upper() in t.upper() or search_query.upper() in get_display_name(t).upper()]
                 else:
                     filtered = tickers
                 
                 if filtered:
-                    # Select All for this category
-                    cat_key = category.replace(" ", "_").replace("🇺🇸", "US").replace("📊", "IDX").replace("📈", "ETF").replace("💎", "CRY").replace("🏛️", "BND").replace("💰", "GLD")
-                    select_all = st.checkbox(f"Select All ({len(filtered)})", key=f"all_{cat_key}")
-                    
-                    st.markdown("---")
-                    
-                    # Create columns for checkboxes
                     cols = st.columns(2)
                     for idx, ticker in enumerate(filtered):
                         with cols[idx % 2]:
-                            # If select_all is checked, default to True
-                            default_checked = select_all or st.session_state.get(f"cb_{cat_key}_{ticker}", False)
-                            if st.checkbox(get_display_name(ticker), value=default_checked, key=f"cb_{cat_key}_{ticker}"):
+                            if st.checkbox(get_display_name(ticker), key=f"cb_{category}_{ticker}"):
                                 selected_symbols.append(ticker)
     else:
         st.markdown("#### ✍️ Manual Entry")
@@ -490,7 +479,6 @@ with st.sidebar:
             import re
             selected_symbols = [s.strip().upper() for s in re.split('[,\n]', manual_input) if s.strip()]
     
-    # Remove duplicates
     selected_symbols = list(dict.fromkeys(selected_symbols))
     
     st.markdown("---")
@@ -508,13 +496,7 @@ with st.sidebar:
     st.markdown("#### 📊 Benchmark")
     use_benchmark = st.checkbox("Compare with benchmark", value=True, key="use_bench")
     benchmark_options = ["^GSPC", "^DJI", "^IXIC", "SPY", "QQQ", "VTI"]
-    benchmark_ticker = st.selectbox(
-        "Select Benchmark",
-        benchmark_options,
-        format_func=lambda x: get_display_name(x),
-        disabled=not use_benchmark,
-        key="bench_select"
-    )
+    benchmark_ticker = st.selectbox("Select Benchmark", benchmark_options, format_func=lambda x: get_display_name(x), disabled=not use_benchmark, key="bench_select")
     
     st.markdown("#### 🔔 Alerts")
     enable_alerts = st.checkbox("Enable risk alerts", value=True, key="alerts_on")
@@ -525,30 +507,26 @@ with st.sidebar:
         min_sharpe_threshold = st.number_input("Min Sharpe", 0.0, 2.0, 0.5, 0.1, disabled=not enable_alerts, key="min_sharpe")
     
     st.markdown("---")
-    
-    # Show selected count
     st.info(f"📦 **{len(selected_symbols)}** assets selected")
     
     if selected_symbols:
         with st.expander("View selected", expanded=False):
-            for t in selected_symbols[:20]:  # Show max 20
+            for t in selected_symbols[:20]:
                 st.markdown(f"• {get_display_name(t)}")
             if len(selected_symbols) > 20:
                 st.markdown(f"*...and {len(selected_symbols) - 20} more*")
     
     st.markdown("---")
     
-    # Start Analysis Button
     if st.button("🚀 START ANALYSIS", use_container_width=True, key="start_btn"):
         if len(selected_symbols) < 2:
             st.error("⚠️ Select at least 2 assets!")
         else:
             st.session_state.selected_tickers = selected_symbols
             st.session_state.run_analysis = True
-            st.session_state.analyzer = None  # Reset previous analysis
+            st.session_state.analyzer = None
             st.rerun()
     
-    # Reset Button
     if st.session_state.analyzer is not None:
         if st.button("🔄 RESET", use_container_width=True, key="reset_btn"):
             st.session_state.analyzer = None
@@ -560,7 +538,6 @@ with st.sidebar:
 
 # Main Content
 if not st.session_state.run_analysis and st.session_state.analyzer is None:
-    # Landing Page
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown("""<div class='dashboard-card'>
@@ -579,7 +556,7 @@ if not st.session_state.run_analysis and st.session_state.analyzer is None:
             <ul>
                 <li>US Stocks by sector</li>
                 <li>ETFs & Indices</li>
-                <li>Crypto & Bonds</li>
+                <li>Crypto, Bonds & Commodities</li>
             </ul>
         </div>""", unsafe_allow_html=True)
     with col3:
@@ -588,7 +565,7 @@ if not st.session_state.run_analysis and st.session_state.analyzer is None:
             <ul>
                 <li>8 optimization strategies</li>
                 <li>Rolling analysis</li>
-                <li>Efficient frontier</li>
+                <li>Deep-dive statistics</li>
                 <li>Benchmark comparison</li>
             </ul>
         </div>""", unsafe_allow_html=True)
@@ -601,7 +578,7 @@ if not st.session_state.run_analysis and st.session_state.analyzer is None:
         "🔥 Tech Giants": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA"],
         "💰 Dividend Stars": ["JNJ", "PG", "KO", "PEP", "MCD", "WMT"],
         "🌍 Global ETFs": ["SPY", "EFA", "EEM", "GLD", "TLT", "VNQ"],
-        "🏦 Financials": ["JPM", "BAC", "GS", "MS", "V", "MA"]
+        "🛢️ Commodities": ["GLD", "SLV", "USO", "UNG", "DBC", "CPER"]
     }
     
     cols = st.columns(4)
@@ -615,7 +592,6 @@ if not st.session_state.run_analysis and st.session_state.analyzer is None:
 
 if st.session_state.run_analysis or st.session_state.analyzer is not None:
     
-    # Run analysis if triggered
     if st.session_state.run_analysis and st.session_state.analyzer is None:
         symbols = st.session_state.selected_tickers
         
@@ -654,7 +630,6 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             analyzer.build_all_portfolios()
             progress_bar.progress(85)
             
-            # Benchmark
             benchmark_returns = None
             if use_benchmark and benchmark_ticker and YF_AVAILABLE:
                 try:
@@ -676,7 +651,6 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             progress_bar.progress(100)
             status_text.text("✅ Analysis complete!")
             
-            # Store results
             st.session_state.analyzer = analyzer
             st.session_state.benchmark_returns = benchmark_returns
             st.session_state.benchmark = benchmark_ticker
@@ -684,22 +658,13 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             st.session_state.analysis_complete = True
             st.session_state.run_analysis = False
             
-            # Alerts
             if enable_alerts:
                 st.session_state.alerts = []
                 for name, portfolio in analyzer.portfolios.items():
                     if abs(portfolio['max_drawdown']) > (max_dd_threshold / 100):
-                        st.session_state.alerts.append({
-                            'type': 'warning',
-                            'portfolio': portfolio['name'],
-                            'message': f"High Drawdown: {portfolio['max_drawdown']*100:.1f}%"
-                        })
+                        st.session_state.alerts.append({'type': 'warning', 'portfolio': portfolio['name'], 'message': f"High Drawdown: {portfolio['max_drawdown']*100:.1f}%"})
                     if portfolio['sharpe_ratio'] < min_sharpe_threshold:
-                        st.session_state.alerts.append({
-                            'type': 'info',
-                            'portfolio': portfolio['name'],
-                            'message': f"Low Sharpe: {portfolio['sharpe_ratio']:.2f}"
-                        })
+                        st.session_state.alerts.append({'type': 'info', 'portfolio': portfolio['name'], 'message': f"Low Sharpe: {portfolio['sharpe_ratio']:.2f}"})
             
             progress_bar.empty()
             status_text.empty()
@@ -713,14 +678,12 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             st.session_state.run_analysis = False
             st.stop()
     
-    # Display results
     if st.session_state.analyzer is not None:
         analyzer = st.session_state.analyzer
         benchmark_returns = st.session_state.benchmark_returns
         symbols = analyzer.symbols
         rf_rate = risk_free_rate / 100
         
-        # Alerts
         if st.session_state.alerts:
             with st.expander(f"🔔 {len(st.session_state.alerts)} Risk Alerts", expanded=False):
                 for alert in st.session_state.alerts:
@@ -729,7 +692,6 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     else:
                         st.info(f"**{alert['portfolio']}**: {alert['message']}")
         
-        # KPI Dashboard
         st.markdown("## 📊 KPI Dashboard")
         portfolios_list = list(analyzer.portfolios.values())
         
@@ -764,16 +726,16 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
         
         st.markdown("---")
         
-        # Tabs
+        # Updated Tabs - Removed Correlations, Added Deep-dive Statistics
         if st.session_state.use_benchmark and benchmark_returns is not None:
             tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
                 "📊 Overview", "💼 Portfolios", "📈 Performance", "🔄 Rolling",
-                "🔗 Correlations", "📐 Frontier", "🎯 Benchmark", "📥 Export"
+                "🔬 Deep-dive Stats", "📐 Frontier", "🎯 Benchmark", "📥 Export"
             ])
         else:
             tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
                 "📊 Overview", "💼 Portfolios", "📈 Performance", "🔄 Rolling",
-                "🔗 Correlations", "📐 Frontier", "📥 Export"
+                "🔬 Deep-dive Stats", "📐 Frontier", "📥 Export"
             ])
             tab8 = None
 # Part 4: Overview and Portfolio Tabs
@@ -790,20 +752,12 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 fig = go.Figure()
                 for i, ticker in enumerate(normalized.columns):
                     fig.add_trace(go.Scatter(
-                        x=normalized.index,
-                        y=normalized[ticker],
-                        name=get_display_name(ticker),
-                        mode='lines',
+                        x=normalized.index, y=normalized[ticker], name=get_display_name(ticker), mode='lines',
                         line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2.5),
                         hovertemplate=f'<b>{get_display_name(ticker)}</b><br>Value: %{{y:.2f}}<extra></extra>'
                     ))
-                fig.update_layout(
-                    height=450,
-                    hovermode='x unified',
-                    xaxis_title="Date",
-                    yaxis_title="Value (Base 100)",
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
-                )
+                fig.update_layout(height=450, hovermode='x unified', xaxis_title="Date", yaxis_title="Value (Base 100)",
+                                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
                 fig = apply_plotly_theme(fig)
                 st.plotly_chart(fig, use_container_width=True)
             
@@ -847,13 +801,9 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             comparison_data = []
             for idx, (key, p) in enumerate(sorted(analyzer.portfolios.items(), key=lambda x: x[1]['sharpe_ratio'], reverse=True), 1):
                 comparison_data.append({
-                    '#': idx,
-                    'Strategy': p['name'],
-                    'Return': f"{p['annualized_return']*100:.2f}%",
-                    'Vol': f"{p['annualized_volatility']*100:.2f}%",
-                    'Sharpe': f"{p['sharpe_ratio']:.3f}",
-                    'Sortino': f"{p['sortino_ratio']:.3f}",
-                    'Max DD': f"{p['max_drawdown']*100:.2f}%"
+                    '#': idx, 'Strategy': p['name'], 'Return': f"{p['annualized_return']*100:.2f}%",
+                    'Vol': f"{p['annualized_volatility']*100:.2f}%", 'Sharpe': f"{p['sharpe_ratio']:.3f}",
+                    'Sortino': f"{p['sortino_ratio']:.3f}", 'Max DD': f"{p['max_drawdown']*100:.2f}%"
                 })
             
             comparison_df = pd.DataFrame(comparison_data)
@@ -867,12 +817,10 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 st.markdown("#### 📊 Returns by Strategy")
                 port_data = sorted(analyzer.portfolios.values(), key=lambda x: x['annualized_return'], reverse=True)
                 fig = go.Figure(data=[go.Bar(
-                    x=[p['name'] for p in port_data],
-                    y=[p['annualized_return'] * 100 for p in port_data],
+                    x=[p['name'] for p in port_data], y=[p['annualized_return'] * 100 for p in port_data],
                     marker_color=CHART_COLORS[:len(port_data)],
                     text=[f"{p['annualized_return']*100:.1f}%" for p in port_data],
-                    textposition='outside',
-                    textfont=dict(color='#E2E8F0', size=9)
+                    textposition='outside', textfont=dict(color='#E2E8F0', size=9)
                 )])
                 fig.update_layout(height=380, xaxis_tickangle=-45, yaxis_title="Return (%)")
                 fig = apply_plotly_theme(fig)
@@ -883,14 +831,10 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 fig = go.Figure()
                 for i, p in enumerate(analyzer.portfolios.values()):
                     fig.add_trace(go.Scatter(
-                        x=[p['annualized_volatility'] * 100],
-                        y=[p['annualized_return'] * 100],
-                        mode='markers+text',
-                        name=p['name'],
+                        x=[p['annualized_volatility'] * 100], y=[p['annualized_return'] * 100],
+                        mode='markers+text', name=p['name'],
                         marker=dict(size=16, color=CHART_COLORS[i % len(CHART_COLORS)]),
-                        text=[p['name'].split()[0]],
-                        textposition='top center',
-                        textfont=dict(color='#E2E8F0', size=8),
+                        text=[p['name'].split()[0]], textposition='top center', textfont=dict(color='#E2E8F0', size=8),
                         hovertemplate=f"<b>{p['name']}</b><br>Return: %{{y:.2f}}%<br>Vol: %{{x:.2f}}%<extra></extra>"
                     ))
                 fig.update_layout(height=380, xaxis_title="Volatility (%)", yaxis_title="Return (%)", showlegend=False)
@@ -899,14 +843,12 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             
             st.markdown("---")
             
-            # Portfolio Details
             st.markdown("#### 🔍 Portfolio Details")
             
             portfolio_keys = list(analyzer.portfolios.keys())
             selected_p = st.selectbox("Select strategy", portfolio_keys, format_func=lambda x: analyzer.portfolios[x]['name'], key="port_detail")
             portfolio = analyzer.portfolios[selected_p]
             
-            # Metrics
             mcols = st.columns(6)
             metrics_list = [
                 ("Return", f"{portfolio['annualized_return']*100:.2f}%"),
@@ -935,23 +877,16 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             
             with col2:
                 fig = go.Figure(data=[go.Pie(
-                    labels=weights_df['Asset'],
-                    values=weights_df['Weight'],
-                    hole=0.4,
-                    marker_colors=CHART_COLORS[:len(weights_df)],
-                    textinfo='percent',
-                    textposition='outside',
+                    labels=weights_df['Asset'], values=weights_df['Weight'], hole=0.4,
+                    marker_colors=CHART_COLORS[:len(weights_df)], textinfo='percent', textposition='outside',
                     textfont=dict(color='#E2E8F0', size=10),
                     hovertemplate='<b>%{label}</b><br>%{value:.2f}%<extra></extra>'
                 )])
-                fig.update_layout(
-                    height=320,
-                    showlegend=False,
-                    annotations=[dict(text=portfolio['name'].split()[0], x=0.5, y=0.5, font_size=11, font_color='#E2E8F0', showarrow=False)]
-                )
+                fig.update_layout(height=320, showlegend=False,
+                    annotations=[dict(text=portfolio['name'].split()[0], x=0.5, y=0.5, font_size=11, font_color='#E2E8F0', showarrow=False)])
                 fig = apply_plotly_theme(fig)
                 st.plotly_chart(fig, use_container_width=True)
-# Part 5: Performance and Rolling Tabs
+# Part 5: Performance, Rolling, and Deep-dive Statistics Tabs
 
         # TAB 3: PERFORMANCE
         with tab3:
@@ -966,11 +901,9 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 for i, p_name in enumerate(sel_perf):
                     p = analyzer.portfolios[p_name]
                     cum_val = (1 + p['returns']).cumprod() * 100
-                    fig.add_trace(go.Scatter(
-                        x=cum_val.index, y=cum_val.values, name=p['name'], mode='lines',
+                    fig.add_trace(go.Scatter(x=cum_val.index, y=cum_val.values, name=p['name'], mode='lines',
                         line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2.5),
-                        hovertemplate=f'<b>{p["name"]}</b><br>Value: %{{y:.2f}}<extra></extra>'
-                    ))
+                        hovertemplate=f'<b>{p["name"]}</b><br>Value: %{{y:.2f}}<extra></extra>'))
                 fig.update_layout(height=420, hovermode='x unified', xaxis_title="Date", yaxis_title="Value (Base 100)",
                                  legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
                 fig = apply_plotly_theme(fig)
@@ -985,21 +918,13 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     dd = (cum_val - roll_max) / roll_max * 100
                     color = CHART_COLORS[i % len(CHART_COLORS)]
                     r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
-                    fig.add_trace(go.Scatter(
-                        x=dd.index, y=dd.values, name=p['name'], mode='lines',
+                    fig.add_trace(go.Scatter(x=dd.index, y=dd.values, name=p['name'], mode='lines',
                         line=dict(color=color, width=2), fill='tozeroy', fillcolor=f'rgba({r},{g},{b},0.2)',
-                        hovertemplate=f'<b>{p["name"]}</b><br>DD: %{{y:.2f}}%<extra></extra>'
-                    ))
+                        hovertemplate=f'<b>{p["name"]}</b><br>DD: %{{y:.2f}}%<extra></extra>'))
                 fig.update_layout(height=320, hovermode='x unified', xaxis_title="Date", yaxis_title="Drawdown (%)",
                                  legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
                 fig = apply_plotly_theme(fig)
                 st.plotly_chart(fig, use_container_width=True)
-                
-                st.markdown("#### 📋 Comparison Table")
-                stats = [{'Strategy': analyzer.portfolios[p]['name'], 'Return': f"{analyzer.portfolios[p]['annualized_return']*100:.2f}%",
-                         'Vol': f"{analyzer.portfolios[p]['annualized_volatility']*100:.2f}%", 'Sharpe': f"{analyzer.portfolios[p]['sharpe_ratio']:.3f}",
-                         'Max DD': f"{analyzer.portfolios[p]['max_drawdown']*100:.2f}%"} for p in sel_perf]
-                st.markdown(create_styled_table(pd.DataFrame(stats)), unsafe_allow_html=True)
             else:
                 st.warning("⚠️ Select at least one strategy")
         
@@ -1028,20 +953,8 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     fig = go.Figure()
                     for i, (name, data) in enumerate(rolling_data.items()):
                         fig.add_trace(go.Scatter(x=data.index, y=data['Return']*100, name=name,
-                            line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2.5),
-                            hovertemplate=f'<b>{name}</b><br>Return: %{{y:.2f}}%<extra></extra>'))
+                            line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2.5)))
                     fig.update_layout(height=350, hovermode='x unified', yaxis_title="Return (%)",
-                                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
-                    fig = apply_plotly_theme(fig)
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    st.markdown("#### 📊 Rolling Volatility")
-                    fig = go.Figure()
-                    for i, (name, data) in enumerate(rolling_data.items()):
-                        fig.add_trace(go.Scatter(x=data.index, y=data['Volatility']*100, name=name,
-                            line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2.5),
-                            hovertemplate=f'<b>{name}</b><br>Vol: %{{y:.2f}}%<extra></extra>'))
-                    fig.update_layout(height=350, hovermode='x unified', yaxis_title="Volatility (%)",
                                      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
                     fig = apply_plotly_theme(fig)
                     st.plotly_chart(fig, use_container_width=True)
@@ -1050,8 +963,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     fig = go.Figure()
                     for i, (name, data) in enumerate(rolling_data.items()):
                         fig.add_trace(go.Scatter(x=data.index, y=data['Sharpe'], name=name,
-                            line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2.5),
-                            hovertemplate=f'<b>{name}</b><br>Sharpe: %{{y:.3f}}<extra></extra>'))
+                            line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2.5)))
                     fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
                     fig.update_layout(height=350, hovermode='x unified', yaxis_title="Sharpe Ratio",
                                      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
@@ -1061,41 +973,260 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     st.warning("⚠️ Not enough data for rolling window")
             else:
                 st.warning("⚠️ Select at least one strategy")
-# Part 6: Correlations, Frontier, Benchmark, Export, Footer
-
-        # TAB 5: CORRELATIONS
+        
+        # TAB 5: DEEP-DIVE STATISTICS (NEW)
         with tab5:
-            st.markdown("### 🔗 Correlation Analysis")
+            st.markdown("### 🔬 Deep-dive Statistics")
+            st.markdown("Statistical analysis of individual asset risk drivers using log-returns and invariance tests.")
             
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                st.markdown("#### 📊 Correlation Matrix")
-                corr = analyzer.returns.corr()
-                corr_disp = corr.copy()
-                corr_disp.index = [get_display_name(t) for t in corr_disp.index]
-                corr_disp.columns = [get_display_name(t) for t in corr_disp.columns]
-                fig = px.imshow(corr_disp, text_auto='.2f', aspect="auto", color_continuous_scale='RdBu_r', zmin=-1, zmax=1)
-                fig.update_layout(height=450)
+            # Asset selector
+            asset_options = [(t, get_display_name(t)) for t in symbols]
+            selected_asset = st.selectbox(
+                "Select Asset for Analysis",
+                options=[t[0] for t in asset_options],
+                format_func=lambda x: get_display_name(x),
+                key="deepdive_asset"
+            )
+            
+            if selected_asset:
+                # Get price data for selected asset
+                prices = analyzer.data[selected_asset]
+                
+                # Calculate risk driver (log-values)
+                x_stock = np.log(prices.values)
+                dates_idx = prices.index
+                
+                # Calculate log-returns (compounded returns)
+                delta_x = np.diff(x_stock)
+                delta_x_abs = np.abs(delta_x)
+                
+                st.markdown("---")
+                
+                # Section 1: Risk Driver Time Series
+                st.markdown(f"#### 📈 Risk Driver: Log-values of {get_display_name(selected_asset)}")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=dates_idx, y=x_stock, mode='lines',
+                        line=dict(color=CHART_COLORS[0], width=2),
+                        hovertemplate='Date: %{x}<br>Log-value: %{y:.4f}<extra></extra>'))
+                    fig.update_layout(height=300, xaxis_title="Date", yaxis_title="Log-values")
+                    fig = apply_plotly_theme(fig)
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    # Basic statistics
+                    st.markdown("##### 📊 Summary Statistics")
+                    stats_data = {
+                        'Metric': ['Mean Log-Return', 'Std Dev', 'Skewness', 'Kurtosis', 'Min', 'Max'],
+                        'Value': [
+                            f"{np.mean(delta_x):.6f}",
+                            f"{np.std(delta_x):.6f}",
+                            f"{stats.skew(delta_x):.4f}",
+                            f"{stats.kurtosis(delta_x):.4f}",
+                            f"{np.min(delta_x):.4f}",
+                            f"{np.max(delta_x):.4f}"
+                        ]
+                    }
+                    st.markdown(create_styled_table(pd.DataFrame(stats_data)), unsafe_allow_html=True)
+                
+                st.markdown("---")
+                
+                # Section 2: Log-Returns (Compounded Returns)
+                st.markdown("#### 📉 Compounded Returns (Log-Returns)")
+                
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=dates_idx[1:], y=delta_x, mode='markers',
+                    marker=dict(size=3, color=CHART_COLORS[1], opacity=0.7),
+                    hovertemplate='Date: %{x}<br>Return: %{y:.4f}<extra></extra>'))
+                fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+                fig.update_layout(height=300, xaxis_title="Date", yaxis_title="Log-Return")
                 fig = apply_plotly_theme(fig)
                 st.plotly_chart(fig, use_container_width=True)
-            
-            with col2:
-                st.markdown("#### 📈 Insights")
-                pairs = []
-                cols_list = corr.columns.tolist()
-                for i in range(len(cols_list)):
-                    for j in range(i+1, len(cols_list)):
-                        pairs.append({'A1': cols_list[i], 'A2': cols_list[j], 'Corr': corr.iloc[i, j]})
-                pairs_df = pd.DataFrame(pairs).sort_values('Corr', ascending=False)
                 
-                st.markdown("**🔥 Most Correlated**")
-                for _, r in pairs_df.head(5).iterrows():
-                    st.success(f"{get_display_name(r['A1'])} ↔ {get_display_name(r['A2'])}: **{r['Corr']:.2f}**")
+                st.markdown("---")
                 
-                st.markdown("**❄️ Least Correlated**")
-                for _, r in pairs_df.tail(5).iterrows():
-                    st.info(f"{get_display_name(r['A1'])} ↔ {get_display_name(r['A2'])}: **{r['Corr']:.2f}**")
-        
+                # Section 3: Invariance Tests
+                st.markdown("#### 🧪 Invariance Tests")
+                st.markdown("Testing if log-returns are IID (independent and identically distributed).")
+                
+                l_bar = st.slider("Maximum lag for autocorrelation", 5, 50, 25, key="lag_slider")
+                conf_lev = 0.95
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Ellipsoid test on returns
+                    st.markdown("##### Autocorrelation of Returns")
+                    acf, conf_int, test_passed = invariance_test_ellipsoid(delta_x, l_bar, conf_lev)
+                    
+                    fig = go.Figure()
+                    fig.add_trace(go.Bar(x=list(range(1, l_bar+1)), y=acf,
+                        marker_color=CHART_COLORS[2], name='ACF'))
+                    fig.add_hline(y=conf_int, line_dash="dash", line_color="#FF6B6B", 
+                                 annotation_text=f"+{conf_lev*100:.0f}% CI")
+                    fig.add_hline(y=-conf_int, line_dash="dash", line_color="#FF6B6B",
+                                 annotation_text=f"-{conf_lev*100:.0f}% CI")
+                    fig.add_hline(y=0, line_color="rgba(255,255,255,0.5)")
+                    fig.update_layout(height=300, xaxis_title="Lag", yaxis_title="Autocorrelation",
+                                     yaxis_range=[-0.3, 0.3])
+                    fig = apply_plotly_theme(fig)
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    if test_passed:
+                        st.success("✅ Returns appear IID (all ACF within confidence bands)")
+                    else:
+                        st.warning("⚠️ Some autocorrelations exceed confidence bands")
+                
+                with col2:
+                    # Ellipsoid test on absolute returns (volatility clustering)
+                    st.markdown("##### Autocorrelation of |Returns| (Volatility Clustering)")
+                    acf_abs, conf_int_abs, test_passed_abs = invariance_test_ellipsoid(delta_x_abs, l_bar, conf_lev)
+                    
+                    fig = go.Figure()
+                    fig.add_trace(go.Bar(x=list(range(1, l_bar+1)), y=acf_abs,
+                        marker_color=CHART_COLORS[3], name='ACF |r|'))
+                    fig.add_hline(y=conf_int_abs, line_dash="dash", line_color="#FF6B6B")
+                    fig.add_hline(y=-conf_int_abs, line_dash="dash", line_color="#FF6B6B")
+                    fig.add_hline(y=0, line_color="rgba(255,255,255,0.5)")
+                    fig.update_layout(height=300, xaxis_title="Lag", yaxis_title="Autocorrelation",
+                                     yaxis_range=[-0.1, 0.4])
+                    fig = apply_plotly_theme(fig)
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    if test_passed_abs:
+                        st.success("✅ No volatility clustering detected")
+                    else:
+                        st.info("ℹ️ Volatility clustering detected (common in financial data)")
+                
+                st.markdown("---")
+                
+                # Section 4: Distribution Analysis
+                st.markdown("#### 📊 Distribution Analysis")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Histogram with normal overlay
+                    st.markdown("##### Return Distribution vs Normal")
+                    
+                    fig = go.Figure()
+                    fig.add_trace(go.Histogram(x=delta_x, nbinsx=50, name='Returns',
+                        marker_color=CHART_COLORS[4], opacity=0.7, histnorm='probability density'))
+                    
+                    # Normal overlay
+                    x_range = np.linspace(delta_x.min(), delta_x.max(), 100)
+                    normal_pdf = stats.norm.pdf(x_range, np.mean(delta_x), np.std(delta_x))
+                    fig.add_trace(go.Scatter(x=x_range, y=normal_pdf, mode='lines',
+                        name='Normal', line=dict(color='#FFFFFF', width=2)))
+                    
+                    fig.update_layout(height=300, xaxis_title="Log-Return", yaxis_title="Density",
+                                     legend=dict(orientation="h", yanchor="bottom", y=1.02))
+                    fig = apply_plotly_theme(fig)
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    # Kolmogorov-Smirnov test
+                    st.markdown("##### Normality Tests")
+                    
+                    ks_stat, ks_pval = ks_test(delta_x)
+                    
+                    # Jarque-Bera test
+                    jb_stat, jb_pval = stats.jarque_bera(delta_x)
+                    
+                    # Shapiro-Wilk (on subsample if too large)
+                    if len(delta_x) > 5000:
+                        sw_sample = np.random.choice(delta_x, 5000, replace=False)
+                    else:
+                        sw_sample = delta_x
+                    sw_stat, sw_pval = stats.shapiro(sw_sample)
+                    
+                    test_results = {
+                        'Test': ['Kolmogorov-Smirnov', 'Jarque-Bera', 'Shapiro-Wilk'],
+                        'Statistic': [f"{ks_stat:.4f}", f"{jb_stat:.2f}", f"{sw_stat:.4f}"],
+                        'p-value': [f"{ks_pval:.4f}", f"{jb_pval:.4f}", f"{sw_pval:.4f}"],
+                        'Normal?': [
+                            "✅ Yes" if ks_pval > 0.05 else "❌ No",
+                            "✅ Yes" if jb_pval > 0.05 else "❌ No",
+                            "✅ Yes" if sw_pval > 0.05 else "❌ No"
+                        ]
+                    }
+                    st.markdown(create_styled_table(pd.DataFrame(test_results)), unsafe_allow_html=True)
+                    
+                    st.markdown("*p-value > 0.05 suggests normality cannot be rejected*")
+                
+                st.markdown("---")
+                
+                # Section 5: GARCH Analysis (if available)
+                if ARCH_AVAILABLE:
+                    st.markdown("#### ⚡ GARCH(1,1) Analysis")
+                    st.markdown("Modeling conditional volatility with GARCH(1,1)")
+                    
+                    with st.spinner("Fitting GARCH model..."):
+                        params, std_resid, cond_vol = fit_garch(delta_x)
+                    
+                    if params is not None:
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("##### Model Parameters")
+                            param_data = {
+                                'Parameter': ['μ (mean)', 'ω (constant)', 'α (ARCH)', 'β (GARCH)', 'Persistence (α+β)'],
+                                'Value': [
+                                    f"{params['mu']:.6f}",
+                                    f"{params['omega']:.8f}",
+                                    f"{params['alpha[1]']:.4f}",
+                                    f"{params['beta[1]']:.4f}",
+                                    f"{params['alpha[1]'] + params['beta[1]']:.4f}"
+                                ]
+                            }
+                            st.markdown(create_styled_table(pd.DataFrame(param_data)), unsafe_allow_html=True)
+                        
+                        with col2:
+                            st.markdown("##### Conditional Volatility")
+                            fig = go.Figure()
+                            fig.add_trace(go.Scatter(x=dates_idx[1:], y=cond_vol*np.sqrt(252)*100,
+                                mode='lines', line=dict(color=CHART_COLORS[5], width=1.5),
+                                hovertemplate='Date: %{x}<br>Ann. Vol: %{y:.2f}%<extra></extra>'))
+                            fig.update_layout(height=250, xaxis_title="Date", yaxis_title="Annualized Vol (%)")
+                            fig = apply_plotly_theme(fig)
+                            st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Standardized residuals
+                        st.markdown("##### Standardized Residuals (Invariants)")
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            fig = go.Figure()
+                            fig.add_trace(go.Scatter(x=dates_idx[1:], y=std_resid, mode='markers',
+                                marker=dict(size=2, color=CHART_COLORS[6], opacity=0.6)))
+                            fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+                            fig.update_layout(height=250, xaxis_title="Date", yaxis_title="Std. Residual")
+                            fig = apply_plotly_theme(fig)
+                            st.plotly_chart(fig, use_container_width=True)
+                        
+                        with col2:
+                            # ACF of squared standardized residuals
+                            acf_resid2, conf_resid, _ = invariance_test_ellipsoid(std_resid**2, 20, 0.95)
+                            
+                            fig = go.Figure()
+                            fig.add_trace(go.Bar(x=list(range(1, 21)), y=acf_resid2,
+                                marker_color=CHART_COLORS[7], name='ACF ε²'))
+                            fig.add_hline(y=conf_resid, line_dash="dash", line_color="#FF6B6B")
+                            fig.add_hline(y=-conf_resid, line_dash="dash", line_color="#FF6B6B")
+                            fig.update_layout(height=250, xaxis_title="Lag", yaxis_title="ACF of ε²",
+                                             yaxis_range=[-0.15, 0.15])
+                            fig = apply_plotly_theme(fig)
+                            st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning("⚠️ Could not fit GARCH model to this data")
+                else:
+                    st.info("ℹ️ Install `arch` package for GARCH analysis: `pip install arch`")
+# Part 6: Frontier, Benchmark, Export, Footer
+
         # TAB 6: FRONTIER
         with tab6:
             st.markdown("### 📐 Efficient Frontier")
@@ -1227,7 +1358,7 @@ st.markdown("---")
 st.markdown("""
 <div class="footer-section">
     <h3>📊 Portfolio Analyzer Pro</h3>
-    <p><strong>Powered by:</strong> Python • Streamlit • Plotly • yfinance</p>
+    <p><strong>Powered by:</strong> Python • Streamlit • Plotly • yfinance • scipy • arch</p>
     <p style="margin-top:0.5rem;opacity:0.6;font-size:0.8rem;">⚠️ For educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
