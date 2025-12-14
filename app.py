@@ -1313,20 +1313,195 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 else:
                     st.info("ℹ️ Install `arch` package for GARCH analysis: `pip install arch`")
 # Part 7: Backtest Validation Tab
-        # TAB 6: BACKTEST VALIDATION (MULTI-METRIC)
+        # TAB 6: BACKTEST VALIDATION (MULTI-METRIC) - COMPLETE VERSION
         with tab6:
             st.markdown("### 🧪 Backtest Validation (AFML – Combinatorial Purged CV)")
-            st.markdown("""
-            This validation framework follows **López de Prado (2018, Ch.7)** with **multi-metric evaluation**:
             
-            - **Combinatorial Purged Cross-Validation**
-            - **Embargo to prevent information leakage**
-            - **Multiple risk-adjusted metrics** (Sharpe, Sortino, Calmar, CVaR)
-            - **Probability of Backtest Overfitting (PBO)**
-
-            This tab provides **research-grade strategy validation** with comprehensive risk assessment.
+            # ==========================
+            # INTRODUCTORY SECTION
+            # ==========================
+            st.markdown("""
+            ## 🎯 What Does This Tab Do?
+            
+            This tab answers a critical question that traditional backtests ignore:
+            
+            > **"Would this strategy have *actually* worked if I had used it in the past *without knowing the future*?"**
+            
+            ### The Problem with Standard Backtests
+            
+            In the other tabs of this app, you optimize and evaluate strategies using **all available data**. 
+            This creates an **illusion of performance** because:
+            
+            - You optimize portfolio weights on data that includes the test period
+            - The strategy "knows" future market conditions during optimization
+            - Reported Sharpe ratios are **systematically overstated**
+            
+            **Metaphor:** It's like a student who studies the exact exam questions, then takes the same exam and claims to be a genius.
+            
+            ### The Solution: Walk-Forward Validation
+            
+            This tab implements **Combinatorial Purged Cross-Validation (CPCV)**, a rigorous framework from 
+            **Marcos López de Prado's "Advances in Financial Machine Learning" (2018, Chapter 7)**.
+            
+            **How it works:**
+            
+            1. **Split time into K folds** (e.g., 5 periods of ~2 years each for 2015-2024)
+            2. **Create all possible train/test combinations** (e.g., 10 different splits)
+            3. **For each split:**
+            - Optimize strategy on **training data only** (e.g., 2019-2024)
+            - Evaluate performance on **held-out test data** (e.g., 2015-2018)
+            - Apply **embargo** to prevent information leakage
+            4. **Aggregate results** across all splits to get a **distribution** of out-of-sample performance
+            
             """)
+            
+            with st.expander("📚 Mathematical Framework"):
+                st.markdown(r"""
+                ### Combinatorial Purged Cross-Validation
+                
+                **Notation:**
+                - $T = \{t_1, t_2, ..., t_N\}$ = time series of dates
+                - $K$ = number of folds
+                - $N^*$ = number of test folds per split
+                
+                **Algorithm:**
+                
+                1. **Partition** $T$ into $K$ consecutive folds: $T = F_1 \cup F_2 \cup ... \cup F_K$
+                
+                2. **Generate** all $\binom{K}{N^*}$ combinations of test folds
+                
+                3. **For each combination** $\mathcal{C} = \{i_1, ..., i_{N^*}\}$:
+                
+                - **Test set:** $T_{test} = F_{i_1} \cup ... \cup F_{i_{N^*}}$
+                
+                - **Embargo set:** $E = \{t \in T : t > \max(T_{test}), t \leq \max(T_{test}) + \delta\}$  
+                    where $\delta$ is the embargo period
+                
+                - **Train set:** $T_{train} = T \setminus (T_{test} \cup E)$
+                
+                4. **Optimize** portfolio weights $w^*$ on $T_{train}$:
+                
+                $$w^* = \arg\max_w \text{Objective}(R_{train}, w)$$
+                
+                5. **Evaluate** on $T_{test}$:
+                
+                $$\text{Performance}_{OOS} = f(R_{test} \cdot w^*)$$
+                
+                ---
+                
+                ### Risk-Adjusted Performance Metrics
+                
+                Let $r_t$ be the portfolio return at time $t$, and $r_f$ the risk-free rate.
+                
+                **Sharpe Ratio:**
+                $$\text{Sharpe} = \frac{\mathbb{E}[r_t - r_f]}{\sigma[r_t]} \times \sqrt{252}$$
+                
+                - Measures return per unit of **total volatility**
+                - Assumes normally distributed returns
+                - **Limitation:** Penalizes upside volatility equally with downside
+                
+                **Sortino Ratio** (recommended):
+                $$\text{Sortino} = \frac{\mathbb{E}[r_t - r_f]}{\sigma^-[r_t]} \times \sqrt{252}$$
+                
+                where $\sigma^-[r_t] = \sqrt{\mathbb{E}[\min(r_t - r_f, 0)^2]}$ is the **downside deviation**.
+                
+                - Only penalizes **downside volatility**
+                - More aligned with investor preferences
+                - Better for asymmetric return distributions
+                
+                **Calmar Ratio** (recommended):
+                $$\text{Calmar} = \frac{\text{Annualized Return}}{\text{Maximum Drawdown}}$$
+                
+                where Maximum Drawdown is:
+                $$\text{MDD} = \max_{t \in [0,T]} \left[ \frac{\max_{s \leq t} V_s - V_t}{\max_{s \leq t} V_s} \right]$$
+                
+                - Measures return per unit of **worst-case loss**
+                - Directly quantifies tail risk
+                - Intuitive for risk management
+                
+                **Conditional Value at Risk (CVaR)**:
+                $$\text{CVaR}_\alpha = \mathbb{E}[r_t \mid r_t \leq \text{VaR}_\alpha]$$
+                
+                - Average of the worst $\alpha$% of returns
+                - Captures tail risk beyond VaR
+                - Used in Basel III regulations
+                
+                ---
+                
+                ### Probability of Backtest Overfitting (PBO)
+                
+                **Definition:** The probability that the strategy with the best in-sample performance 
+                actually underperforms out-of-sample.
+                
+                **Algorithm:**
+                
+                1. For each split $s$, rank all strategies by **in-sample** metric → get best strategy $\pi_s^{IS}$
+                
+                2. Find the **out-of-sample rank** $R_s^{OOS}$ of strategy $\pi_s^{IS}$
+                
+                3. Compute the probability:
+                
+                $$\text{PBO} = P\left(R^{OOS} > \frac{M+1}{2}\right)$$
+                
+                where $M$ is the number of strategies.
+                
+                **Interpretation:**
+                - **PBO < 10%**: Excellent - strategy selection is robust
+                - **PBO < 30%**: Acceptable - results are reliable
+                - **PBO > 50%**: Warning - severe overfitting detected
+                
+                **Reference:** Bailey, D. H., & López de Prado, M. (2014). "The Probability of Backtest Overfitting." 
+                *Journal of Computational Finance*, 20(4).
+                """)
+            
+            with st.expander("🔬 Why This Matters: Real-World Example"):
+                st.markdown("""
+                ### Case Study: The Overfitting Trap
+                
+                **Scenario:**
+                - Period: 2015-2024
+                - Assets: 5 tech stocks (AAPL, MSFT, GOOGL, AMZN, TSLA)
+                - Strategy: Maximum Sharpe optimization
+                
+                **Standard Backtest (Other Tabs):**
+                ```
+                Full-period Sharpe: 1.85 ✨
+                Max Drawdown: 25%
+                Annual Return: 18%
+                ```
+                
+                **Looks amazing!** But this is optimized on **all** data including bull markets, crashes, recoveries.
+                
+                **CPCV Validation (This Tab):**
+                ```
+                Median OOS Sharpe: 0.82 ⚠️
+                Std OOS Sharpe: 0.45
+                Max OOS Drawdown: 68% 🚨
+                PBO: 62%
+                
+                Split-by-split results:
+                - Bull market periods: Sharpe = 1.8
+                - Bear market periods: Sharpe = -0.3
+                - Recovery periods: Sharpe = 1.1
+                ```
+                
+                **Conclusion:** The strategy is **regime-dependent** and **overfitted** to the full-period data. 
+                The "real" Sharpe is closer to **0.8**, not 1.85.
+                
+                ---
+                
+                ### What You Learn From This Tab
+                
+                ✅ **Robustness:** Does the strategy work across different market regimes?  
+                ✅ **Stability:** How consistent is performance over time?  
+                ✅ **Overfitting Risk:** Is the high Sharpe due to skill or luck?  
+                ✅ **Tail Risk:** What's the worst-case scenario in unseen data?  
+                
+                **Best Practice:** Use this tab **before** committing capital to any strategy.
+                """)
+            
             st.markdown("---")
+            st.markdown("## ⚙️ Configuration")
 
             # ==========================
             # CONFIGURATION
