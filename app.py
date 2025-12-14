@@ -1555,6 +1555,111 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         "Ranking is based on **median OOS Sharpe**, not on a single backtest.\n\n"
                         "This reduces selection bias and aligns with AFML best practices."
                     )
+                    # ============================================================
+                    # 🧠 INTERPRETATION & FINAL RECAP (AFML STYLE)
+                    # ============================================================
+
+                    st.markdown("---")
+                    st.markdown("## 🧠 Interpretation & Final Recap")
+
+                    # ==========================
+                    # BUILD SUMMARY STATISTICS
+                    # ==========================
+                    summary_rows = []
+                    for method, sharpes in oos_sharpes.items():
+                        summary_rows.append({
+                            "Strategy": method_names.get(method, method),
+                            "Median OOS Sharpe": np.median(sharpes),
+                            "Mean OOS Sharpe": np.mean(sharpes),
+                            "Std OOS Sharpe": np.std(sharpes),
+                            "Min OOS Sharpe": np.min(sharpes),
+                            "Max OOS Sharpe": np.max(sharpes)
+                        })
+
+                    summary_df = (
+                        pd.DataFrame(summary_rows)
+                        .sort_values("Median OOS Sharpe", ascending=False)
+                    )
+
+                    st.markdown(
+                        create_styled_table(summary_df.round(3)),
+                        unsafe_allow_html=True
+                    )
+
+                    st.markdown(
+                        """
+                    **How to read this table:**
+                    - **Median OOS Sharpe** → typical performance across time regimes (most important)
+                    - **Std OOS Sharpe** → stability (lower = more robust)
+                    - **Min / Max** → tail risk and lucky runs
+                    """
+                    )
+
+                    # ==========================
+                    # PBO INTERPRETATION
+                    # ==========================
+                    st.markdown("### 📉 Overfitting Assessment")
+
+                    if pbo < 0.1:
+                        pbo_msg = "🟢 **Very low probability of overfitting**. The validation results are highly reliable."
+                    elif pbo < 0.3:
+                        pbo_msg = "🟡 **Moderate overfitting risk**. Results are acceptable but should be monitored."
+                    elif pbo < 0.5:
+                        pbo_msg = "🟠 **High risk of overfitting**. Strategy selection may not be stable."
+                    else:
+                        pbo_msg = "🔴 **Severe overfitting detected**. Apparent performance is likely due to chance."
+
+                    st.markdown(f"""
+                    **Probability of Backtest Overfitting (PBO): `{pbo:.2%}`**
+
+                    {pbo_msg}
+
+                    **Interpretation**  
+                    PBO answers the question:
+
+                    > *"How often does the strategy that looks best in-sample fail out-of-sample?"*
+
+                    Lower is better. Values above **30%** should be treated with caution.
+                    """)
+
+                    # ==========================
+                    # ROBUST STRATEGY ANALYSIS
+                    # ==========================
+                    best_strategy = summary_df.iloc[0]
+                    worst_strategy = summary_df.iloc[-1]
+
+                    st.markdown("### 🏆 Robustness Analysis")
+
+                    st.markdown(f"""
+                    - **Most robust strategy**: **{best_strategy['Strategy']}**
+                    - Median OOS Sharpe: **{best_strategy['Median OOS Sharpe']:.2f}**
+                    - Dispersion (Std): **{best_strategy['Std OOS Sharpe']:.2f}**
+                    - Indicates **consistent performance across multiple market regimes**.
+
+                    - **Least robust strategy**: **{worst_strategy['Strategy']}**
+                    - Median OOS Sharpe: **{worst_strategy['Median OOS Sharpe']:.2f}**
+                    - High variability suggests **sensitivity to regime and parameter instability**.
+                    """)
+
+                    # ==========================
+                    # FINAL TAKEAWAY
+                    # ==========================
+                    st.markdown("### 🎯 Final Takeaway")
+
+                    st.info("""
+                    This validation **does not aim to identify the single best strategy**.
+
+                    Instead, it evaluates:
+                    - **Robustness to time variation**
+                    - **Stability of performance**
+                    - **Reliability of the selection process**
+
+                    **Best practice (AFML):**
+                    - Prefer strategies with **high median OOS Sharpe**
+                    - Penalize high dispersion
+                    - Avoid strategy selection if **PBO > 30%**
+                    - Treat extreme Sharpe values as **potential overfitting**
+                    """)
 # Part 8: Frontier, Benchmark, Export, Footer
 
         # TAB 7: FRONTIER
