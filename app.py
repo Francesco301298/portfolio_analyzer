@@ -1400,22 +1400,23 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 returns_excess = returns - rf_rate
                 
                 # 1. SHARPE RATIO (volatility-adjusted)
-                # Formula: (Annualized Return - Risk Free) / Annualized Volatility
+                # Formula: (Annualized Return - Risk Free Rate) / Annualized Volatility
+                # Note: rf_rate is already annualized, so we don't multiply by 252
                 if returns.std() > 0:
                     annual_return = returns.mean() * 252
                     annual_vol = returns.std() * np.sqrt(252)
-                    sharpe = (annual_return - rf_rate * 252) / annual_vol
+                    sharpe = (annual_return - rf_rate) / annual_vol
                 else:
                     sharpe = np.nan
                 
                 # 2. SORTINO RATIO (downside risk only)
-                # Formula: (Annualized Return - Risk Free) / Annualized Downside Deviation
+                # Formula: (Annualized Return - Risk Free Rate) / Annualized Downside Deviation
                 downside_returns = returns[returns < 0]
                 if len(downside_returns) > 0:
                     annual_return = returns.mean() * 252
                     downside_std = downside_returns.std() * np.sqrt(252)
                     if downside_std > 0:
-                        sortino = (annual_return - rf_rate * 252) / downside_std
+                        sortino = (annual_return - rf_rate) / downside_std
                     else:
                         sortino = np.nan
                 else:
