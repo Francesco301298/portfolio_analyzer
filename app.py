@@ -1313,365 +1313,482 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 else:
                     st.info("ℹ️ Install `arch` package for GARCH analysis: `pip install arch`")
 # Part 7: Backtest Validation Tab
+# TAB 6: BACKTEST VALIDATION (CORRECTED)
+with tab6:
+    st.markdown("### 🧪 Backtest Validation (AFML – Combinatorial Purged CV)")
+    st.markdown("""
+    This validation framework follows **López de Prado (2018, Ch.7)**:
+    
+    - **Combinatorial Purged Cross-Validation**
+    - **Embargo to prevent information leakage**
+    - **Out-of-Sample performance distributions**
+    - **Probability of Backtest Overfitting (PBO)**
 
-        # TAB 6: BACKTEST VALIDATION
-        with tab6:
-            st.markdown("### 🧪 Backtest Validation (AFML – Combinatorial Purged CV)")
-            st.markdown("""
-            This validation framework follows **López de Prado (2018, Ch.7)**:
+    This tab is designed for **research-grade strategy validation**, not point-estimate backtests.
+    """)
+    st.markdown("---")
+
+    # ==========================
+    # CONFIGURATION
+    # ==========================
+    col1, col2 = st.columns(2)
+    with col1:
+        n_splits = st.selectbox("Number of folds (K)", [5, 6, 8], index=0)
+    with col2:
+        n_test_splits = st.selectbox("Test folds per split", [1, 2], index=1)
+
+    embargo_pct = st.slider(
+        "Embargo (% of dataset)",
+        min_value=0.0,
+        max_value=5.0,
+        value=1.0,
+        step=0.25
+    ) / 100
+    st.caption(
+        "🛑 **Embargo** removes a buffer of data *after* the test period to prevent "
+        "information leakage due to autocorrelation. \n\n"
+        "An embargo of **1%–5%** means that data immediately following the test window "
+        "is excluded from training. Higher values make validation more conservative."
+    )
+
+    methods_to_test = st.multiselect(
+        "Strategies",
+        ["equal", "min_vol", "max_sharpe", "risk_parity"],
+        default=["equal", "min_vol", "max_sharpe", "risk_parity"]
+    )
+
+    method_names = {
+        "equal": "Equally Weighted",
+        "min_vol": "Minimum Volatility",
+        "max_sharpe": "Maximum Sharpe",
+        "risk_parity": "Risk Parity"
+    }
+
+    # ==========================
+    # CORE FUNCTIONS (FIXED)
+    # ==========================
+    from itertools import combinations
+
+    def combinatorial_purged_cv(dates, n_splits, n_test_splits, embargo_pct):
+        """
+        Creates train/test splits with embargo to prevent leakage.
+        
+        FIXED: 
+        - Embargo now correctly applied AFTER test period
+        - Added validation for minimum fold size
+        """
+        fold_size = len(dates) // n_splits
+        
+        # Validate minimum fold size
+        if fold_size < 20:
+            raise ValueError(f"Fold size too small ({fold_size}). Reduce n_splits or use more data.")
+        
+        # Create equal-sized folds
+        folds = []
+        for i in range(n_splits):
+            start_idx = i * fold_size
+            end_idx = (i + 1) * fold_size if i < n_splits - 1 else len(dates)
+            folds.append(dates[start_idx:end_idx])
+
+        splits = []
+        embargo_size = int(len(dates) * embargo_pct)
+        
+        for test_fold_indices in combinations(range(n_splits), n_test_splits):
+            # Collect test dates
+            test_dates = pd.Index([])
+            for fold_idx in test_fold_indices:
+                test_dates = test_dates.append(folds[fold_idx])
+            test_dates = test_dates.sort_values()
             
-            - **Combinatorial Purged Cross-Validation**
-            - **Embargo to prevent information leakage**
-            - **Out-of-Sample performance distributions**
-            - **Probability of Backtest Overfitting (PBO)**
+            # Start with all non-test dates
+            train_dates = dates.difference(test_dates)
+            
+            # Apply embargo: remove dates AFTER test period
+            if embargo_size > 0 and len(test_dates) > 0:
+                test_end = test_dates.max()
+                # Find dates after test_end
+                embargo_dates = dates[(dates > test_end)][:embargo_size]
+                train_dates = train_dates.difference(embargo_dates)
+            
+            # Validate split
+            if len(train_dates) < 50 or len(test_dates) < 10:
+                continue  # Skip invalid splits
+            
+            splits.append((train_dates.sort_values(), test_dates))
 
-            This tab is designed for **research-grade strategy validation**, not point-estimate backtests.
-            """)
+        if len(splits) == 0:
+            raise ValueError("No valid splits created. Adjust parameters.")
+        
+        return splits
+
+
+    def run_cpcv_backtest(
+        returns_df,
+        methods,
+        rf_rate,
+        n_splits=5,
+        n_test_splits=2,
+        embargo_pct=0.01
+    ):
+        """
+        Run combinatorial purged cross-validation.
+        
+        FIXED:
+        - Now tracks both IS and OOS Sharpe for correct PBO calculation
+        - Added error handling for failed optimizations
+        - Consistent portfolio evaluation
+        """
+        splits = combinatorial_purged_cv(
+            returns_df.index,
+            n_splits,
+            n_test_splits,
+            embargo_pct
+        )
+
+        # Store both IS and OOS results
+        is_sharpes = {m: [] for m in methods}  # NEW: in-sample results
+        oos_sharpes = {m: [] for m in methods}
+        oos_returns = {m: [] for m in methods}
+        
+        n_splits_total = len(splits)
+        
+        for split_idx, (train_idx, test_idx) in enumerate(splits):
+            train_returns = returns_df.loc[train_idx]
+            test_returns = returns_df.loc[test_idx]
+
+            for method in methods:
+                try:
+                    # Optimize on training data
+                    weights = optimize_portfolio_weights(
+                        train_returns,
+                        method=method,
+                        rf_rate=rf_rate
+                    )
+                    
+                    # Evaluate on IN-SAMPLE (training data)
+                    train_portfolio_returns = train_returns.dot(weights)
+                    is_metrics = calculate_portfolio_metrics(
+                        train_portfolio_returns,
+                        rf_rate=rf_rate
+                    )
+                    is_sharpes[method].append(is_metrics['sharpe'])
+                    
+                    # Evaluate on OUT-OF-SAMPLE (test data)
+                    test_portfolio_returns = test_returns.dot(weights)
+                    oos_metrics = calculate_portfolio_metrics(
+                        test_portfolio_returns,
+                        rf_rate=rf_rate
+                    )
+                    
+                    oos_returns[method].append(test_portfolio_returns)
+                    oos_sharpes[method].append(oos_metrics['sharpe'])
+                    
+                except Exception as e:
+                    # Handle optimization failures gracefully
+                    st.warning(f"Split {split_idx+1}/{n_splits_total}: {method} optimization failed")
+                    is_sharpes[method].append(np.nan)
+                    oos_sharpes[method].append(np.nan)
+                    continue
+
+        return is_sharpes, oos_sharpes, oos_returns
+
+
+    def compute_pbo(is_sharpes, oos_sharpes):
+        """
+        Compute Probability of Backtest Overfitting.
+        
+        FIXED: Now correctly compares IS vs OOS rankings
+        
+        Algorithm:
+        1. For each split, rank strategies by IS Sharpe
+        2. Select best IS strategy
+        3. Check its rank in OOS
+        4. PBO = P(OOS rank of best IS strategy > median)
+        """
+        is_df = pd.DataFrame(is_sharpes).dropna()
+        oos_df = pd.DataFrame(oos_sharpes).dropna()
+        
+        if len(is_df) == 0 or len(oos_df) == 0:
+            return np.nan
+        
+        # Ensure same splits
+        common_idx = is_df.index.intersection(oos_df.index)
+        is_df = is_df.loc[common_idx]
+        oos_df = oos_df.loc[common_idx]
+        
+        n_strategies = len(is_df.columns)
+        
+        # For each split, find best IS strategy
+        is_ranks = is_df.rank(axis=1, ascending=False)  # 1 = best
+        best_is_strategy = is_ranks.idxmin(axis=1)  # Strategy with rank 1
+        
+        # Get OOS rank of that strategy
+        oos_ranks = oos_df.rank(axis=1, ascending=False)
+        oos_rank_of_best_is = np.array([
+            oos_ranks.loc[idx, best_is_strategy[idx]] 
+            for idx in common_idx
+        ])
+        
+        # PBO: probability that best IS has OOS rank > n/2
+        median_rank = (n_strategies + 1) / 2
+        pbo = np.mean(oos_rank_of_best_is > median_rank)
+        
+        return pbo
+
+
+    # ==========================
+    # RUN BACKTEST
+    # ==========================
+    if st.button("🚀 Run AFML Validation", use_container_width=True):
+        if not methods_to_test:
+            st.error("Select at least one strategy.")
+        elif len(methods_to_test) < 2:
+            st.error("Select at least 2 strategies for meaningful comparison.")
+        else:
+            with st.spinner("Running Combinatorial Purged Cross-Validation..."):
+                try:
+                    is_sharpes, oos_sharpes, oos_returns = run_cpcv_backtest(
+                        analyzer.returns,
+                        methods_to_test,
+                        rf_rate,
+                        n_splits,
+                        n_test_splits,
+                        embargo_pct
+                    )
+                    
+                    pbo = compute_pbo(is_sharpes, oos_sharpes)
+                    
+                    st.success(f"✅ Validation completed ({len(oos_sharpes[methods_to_test[0]])} splits)")
+                    
+                except ValueError as e:
+                    st.error(f"Configuration error: {str(e)}")
+                    st.stop()
+                except Exception as e:
+                    st.error(f"Unexpected error: {str(e)}")
+                    st.stop()
+
             st.markdown("---")
 
             # ==========================
-            # CONFIGURATION
+            # PBO METRIC
             # ==========================
-            col1, col2 = st.columns(2)
-            with col1:
-                n_splits = st.selectbox("Number of folds (K)", [5, 6, 8], index=0)
-            with col2:
-                n_test_splits = st.selectbox("Test folds per split", [1, 2], index=1)
-
-            embargo_pct = st.slider(
-                "Embargo (% of dataset)",
-                min_value=0.0,
-                max_value=5.0,
-                value=1.0,
-                step=0.25
-            ) / 100
-            st.caption(
-                "🛑 **Embargo** removes a buffer of data between training and test periods to prevent "
-                "information leakage due to autocorrelation. \n\n"
-                "An embargo of **1%–5%** means that the first part of the dataset *after* the test window "
-                "is excluded from training. Higher values make validation more conservative."
-            )
-
-            methods_to_test = st.multiselect(
-                "Strategies",
-                ["equal", "min_vol", "max_sharpe", "risk_parity"],
-                default=["equal", "min_vol", "max_sharpe", "risk_parity"]
-            )
-
-            method_names = {
-                "equal": "Equally Weighted",
-                "min_vol": "Minimum Volatility",
-                "max_sharpe": "Maximum Sharpe",
-                "risk_parity": "Risk Parity"
-            }
-
-            # ==========================
-            # CORE FUNCTIONS (AFML)
-            # ==========================
-            from itertools import combinations
-
-            def combinatorial_purged_cv(dates, n_splits, n_test_splits, embargo_pct):
-                fold_size = len(dates) // n_splits
-                folds = [dates[i*fold_size:(i+1)*fold_size] for i in range(n_splits)]
-
-                splits = []
-                for test_folds in combinations(range(n_splits), n_test_splits):
-                    test_idx = pd.Index([])
-                    for f in test_folds:
-                        test_idx = test_idx.append(folds[f])
-
-                    train_idx = dates.difference(test_idx)
-
-                    # Embargo
-                    embargo = int(len(dates) * embargo_pct)
-                    if embargo > 0:
-                        test_start = test_idx.min()
-                        embargo_dates = dates[(dates >= test_start)][:embargo]
-                        train_idx = train_idx.difference(embargo_dates)
-
-                    splits.append((train_idx.sort_values(), test_idx.sort_values()))
-
-                return splits
-
-
-            def run_cpcv_backtest(
-                returns_df,
-                methods,
-                rf_rate,
-                n_splits=5,
-                n_test_splits=2,
-                embargo_pct=0.01
-            ):
-                splits = combinatorial_purged_cv(
-                    returns_df.index,
-                    n_splits,
-                    n_test_splits,
-                    embargo_pct
+            st.markdown("#### 📉 Probability of Backtest Overfitting")
+            
+            if np.isnan(pbo):
+                st.warning("⚠️ PBO could not be calculated (insufficient valid splits)")
+            else:
+                pbo_color = "inverse" if pbo < 0.3 else "off"
+                st.metric(
+                    "PBO",
+                    f"{pbo:.2%}",
+                    delta=None,
+                    delta_color=pbo_color,
+                    help="Probability that the best in-sample strategy underperforms out-of-sample."
                 )
-
-                oos_sharpes = {m: [] for m in methods}
-                oos_returns = {m: [] for m in methods}
-
-                for train_idx, test_idx in splits:
-                    train_returns = returns_df.loc[train_idx]
-                    test_returns = returns_df.loc[test_idx]
-
-                    for method in methods:
-                        # 🔑 USE EXISTING OPTIMIZER
-                        weights = optimize_portfolio_weights(
-                            train_returns,
-                            method=method,
-                            rf_rate=rf_rate
-                        )
-
-                        test_portfolio_returns = test_returns.dot(weights)
-
-                        # 🔑 USE EXISTING METRICS FUNCTION
-                        metrics = calculate_portfolio_metrics(
-                            test_portfolio_returns,
-                            rf_rate=rf_rate
-                        )
-
-                        oos_returns[method].append(test_portfolio_returns)
-                        oos_sharpes[method].append(metrics['sharpe'])
-
-                return oos_sharpes, oos_returns
-
-
-            def compute_pbo(oos_sharpes):
-                sharpe_df = pd.DataFrame(oos_sharpes)
-
-                # Rank strategies per split
-                ranks = sharpe_df.rank(axis=1, ascending=False)
-                best_is = ranks.idxmin(axis=1)
-
-                oos_rank = np.array([
-                    ranks.loc[i, best_is[i]] for i in ranks.index
-                ])
-
-                logit = np.log(oos_rank / (len(oos_sharpes) - oos_rank))
-                pbo = np.mean(logit < 0)
-
-                return pbo
+                st.caption(
+                    "📉 **PBO (Probability of Backtest Overfitting)** measures how often the strategy "
+                    "that looks best in-sample actually ranks poorly out-of-sample. \n\n"
+                    "**< 10%** = Excellent | **< 30%** = Acceptable | **> 50%** = Severe overfitting"
+                )
+            st.markdown("---")
 
             # ==========================
-            # RUN BACKTEST
+            # OOS SHARPE DISTRIBUTIONS
             # ==========================
-            if st.button("🚀 Run AFML Validation", use_container_width=True):
-                if not methods_to_test:
-                    st.error("Select at least one strategy.")
+            st.markdown("#### 📊 Out-of-Sample Sharpe Distributions")
+
+            fig = go.Figure()
+            for i, (method, sharpes) in enumerate(oos_sharpes.items()):
+                # Remove NaN values
+                valid_sharpes = [s for s in sharpes if not np.isnan(s)]
+                
+                fig.add_trace(go.Box(
+                    y=valid_sharpes,
+                    name=method_names.get(method, method),
+                    boxmean='sd',  # Show mean and std
+                    marker_color=CHART_COLORS[i % len(CHART_COLORS)]
+                ))
+
+            fig.update_layout(
+                height=400,
+                yaxis_title="Sharpe Ratio",
+                showlegend=False
+            )
+            st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
+
+            st.markdown("---")
+
+            # ==========================
+            # OOS RETURN DISTRIBUTIONS
+            # ==========================
+            st.markdown("#### 📈 Out-of-Sample Return Distributions")
+
+            fig = go.Figure()
+            for i, (method, ret_list) in enumerate(oos_returns.items()):
+                # Filter out empty series
+                valid_returns = [r for r in ret_list if len(r) > 0]
+                if valid_returns:
+                    flat_returns = pd.concat(valid_returns)
+                    fig.add_trace(go.Histogram(
+                        x=flat_returns.values * 100,
+                        name=method_names.get(method, method),
+                        opacity=0.65,
+                        marker_color=CHART_COLORS[i % len(CHART_COLORS)],
+                        nbinsx=50
+                    ))
+
+            fig.update_layout(
+                height=350,
+                barmode="overlay",
+                xaxis_title="Daily Return (%)",
+                yaxis_title="Frequency"
+            )
+            st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
+
+            st.markdown("---")
+
+            # ==========================
+            # ROBUST RANKING
+            # ==========================
+            st.markdown("#### 🏆 Robust Out-of-Sample Ranking")
+
+            ranking_data = []
+            for method in methods_to_test:
+                valid_sharpes = [s for s in oos_sharpes[method] if not np.isnan(s)]
+                
+                if len(valid_sharpes) > 0:
+                    ranking_data.append({
+                        "Strategy": method_names.get(method, method),
+                        "Median OOS Sharpe": np.median(valid_sharpes),
+                        "Mean OOS Sharpe": np.mean(valid_sharpes),
+                        "Std OOS Sharpe": np.std(valid_sharpes),
+                        "Valid Splits": len(valid_sharpes)
+                    })
+
+            ranking_df = pd.DataFrame(ranking_data).sort_values(
+                "Median OOS Sharpe", ascending=False
+            )
+
+            st.markdown(
+                create_styled_table(ranking_df.round(3)),
+                unsafe_allow_html=True
+            )
+
+            st.info(
+                "✅ Rankings are now **independent of strategy selection** and based on consistent splits.\n\n"
+                "Each strategy is evaluated on the same data folds."
+            )
+
+            # ==========================
+            # INTERPRETATION
+            # ==========================
+            st.markdown("---")
+            st.markdown("## 🧠 Interpretation & Final Recap")
+
+            summary_rows = []
+            for method in methods_to_test:
+                valid_sharpes = [s for s in oos_sharpes[method] if not np.isnan(s)]
+                
+                if len(valid_sharpes) > 0:
+                    summary_rows.append({
+                        "Strategy": method_names.get(method, method),
+                        "Median OOS Sharpe": np.median(valid_sharpes),
+                        "Mean OOS Sharpe": np.mean(valid_sharpes),
+                        "Std OOS Sharpe": np.std(valid_sharpes),
+                        "Min OOS Sharpe": np.min(valid_sharpes),
+                        "Max OOS Sharpe": np.max(valid_sharpes)
+                    })
+
+            summary_df = (
+                pd.DataFrame(summary_rows)
+                .sort_values("Median OOS Sharpe", ascending=False)
+            )
+
+            st.markdown(
+                create_styled_table(summary_df.round(3)),
+                unsafe_allow_html=True
+            )
+
+            st.markdown(
+                """
+            **How to read this table:**
+            - **Median OOS Sharpe** → typical performance across regimes (most robust metric)
+            - **Std OOS Sharpe** → consistency (lower = more stable)
+            - **Min / Max** → worst/best case scenarios
+            """
+            )
+
+            # ==========================
+            # PBO INTERPRETATION
+            # ==========================
+            st.markdown("### 📉 Overfitting Assessment")
+
+            if np.isnan(pbo):
+                st.warning("⚠️ PBO unavailable due to insufficient data")
+            else:
+                if pbo < 0.1:
+                    pbo_msg = "🟢 **Excellent**: Very low overfitting risk. Results are highly reliable."
+                elif pbo < 0.3:
+                    pbo_msg = "🟡 **Good**: Acceptable overfitting risk. Results are generally reliable."
+                elif pbo < 0.5:
+                    pbo_msg = "🟠 **Caution**: High overfitting risk. Strategy selection may not be stable."
                 else:
-                    with st.spinner("Running Combinatorial Purged Cross-Validation..."):
-                        oos_sharpes, oos_returns = run_cpcv_backtest(
-                            analyzer.returns,
-                            methods_to_test,
-                            rf_rate,
-                            n_splits,
-                            n_test_splits,
-                            embargo_pct
-                        )
+                    pbo_msg = "🔴 **Warning**: Severe overfitting. Results likely due to chance."
 
-                        pbo = compute_pbo(oos_sharpes)
+                st.markdown(f"""
+                **Probability of Backtest Overfitting (PBO): `{pbo:.2%}`**
 
-                    st.success("✅ Validation completed")
-                    st.markdown("---")
+                {pbo_msg}
 
-                    # ==========================
-                    # PBO METRIC
-                    # ==========================
-                    st.markdown("#### 📉 Probability of Backtest Overfitting")
-                    st.metric(
-                        "PBO",
-                        f"{pbo:.2%}",
-                        help="Probability that the best in-sample strategy underperforms out-of-sample."
-                    )
-                    st.caption(
-                        "📉 **PBO (Probability of Backtest Overfitting)** estimates how often the strategy that "
-                        "looks best in-sample actually performs poorly out-of-sample. \n\n"
-                        "Low PBO means the strategy ranking is stable and reliable. "
-                        "High PBO indicates selection bias and overfitting."
-                    )
-                    st.markdown("---")
+                **What PBO measures:**  
+                > *"How often does the strategy that looks best in-sample actually underperform out-of-sample?"*
 
-                    # ==========================
-                    # OOS SHARPE DISTRIBUTIONS
-                    # ==========================
-                    st.markdown("#### 📊 Out-of-Sample Sharpe Distributions")
+                - **PBO < 10%**: Strategy selection is robust
+                - **PBO 10-30%**: Acceptable but monitor carefully
+                - **PBO > 30%**: High risk of selecting inferior strategy
+                - **PBO > 50%**: Strategy ranking is essentially random
+                """)
 
-                    fig = go.Figure()
-                    for i, (method, sharpes) in enumerate(oos_sharpes.items()):
-                        fig.add_trace(go.Box(
-                            y=sharpes,
-                            name=method_names.get(method, method),
-                            boxmean=True,
-                            marker_color=CHART_COLORS[i % len(CHART_COLORS)]
-                        ))
+            # ==========================
+            # ROBUSTNESS ANALYSIS
+            # ==========================
+            if len(summary_df) > 0:
+                best_strategy = summary_df.iloc[0]
+                worst_strategy = summary_df.iloc[-1]
 
-                    fig.update_layout(
-                        height=400,
-                        yaxis_title="Sharpe Ratio",
-                        showlegend=False
-                    )
-                    st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
+                st.markdown("### 🏆 Robustness Analysis")
 
-                    st.markdown("---")
+                st.markdown(f"""
+                **Most robust strategy: {best_strategy['Strategy']}**
+                - Median OOS Sharpe: **{best_strategy['Median OOS Sharpe']:.2f}**
+                - Dispersion (Std): **{best_strategy['Std OOS Sharpe']:.2f}**
+                - ✅ Consistent performance across market regimes
 
-                    # ==========================
-                    # OOS RETURN DISTRIBUTIONS
-                    # ==========================
-                    st.markdown("#### 📈 Out-of-Sample Return Distributions")
+                **Least robust strategy: {worst_strategy['Strategy']}**
+                - Median OOS Sharpe: **{worst_strategy['Median OOS Sharpe']:.2f}**
+                - ⚠️ May be sensitive to regime changes or parameter instability
+                """)
 
-                    fig = go.Figure()
-                    for i, (method, ret_list) in enumerate(oos_returns.items()):
-                        flat_returns = pd.concat(ret_list)
-                        fig.add_trace(go.Histogram(
-                            x=flat_returns.values * 100,
-                            name=method_names.get(method, method),
-                            opacity=0.65,
-                            marker_color=CHART_COLORS[i % len(CHART_COLORS)]
-                        ))
+            # ==========================
+            # FINAL TAKEAWAY
+            # ==========================
+            st.markdown("### 🎯 Final Takeaway")
 
-                    fig.update_layout(
-                        height=350,
-                        barmode="overlay",
-                        xaxis_title="Daily Return (%)"
-                    )
-                    st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
+            st.info("""
+            **This validation does NOT identify "the best strategy".**
 
-                    st.markdown("---")
+            Instead, it evaluates:
+            ✅ **Robustness** to time variation and market regimes  
+            ✅ **Stability** of performance rankings  
+            ✅ **Reliability** of the selection process  
 
-                    # ==========================
-                    # ROBUST RANKING (MEDIAN OOS)
-                    # ==========================
-                    st.markdown("#### 🏆 Robust Out-of-Sample Ranking")
+            **AFML Best Practices:**
+            - Trust strategies with **high median OOS Sharpe** and **low dispersion**
+            - Avoid strategy selection if **PBO > 30%**
+            - Treat extreme Sharpe values as **potential overfitting artifacts**
+            - Consider **ensemble approaches** rather than single strategy selection
+            """)
 
-                    ranking_data = []
-                    for method, sharpes in oos_sharpes.items():
-                        ranking_data.append({
-                            "Strategy": method_names.get(method, method),
-                            "Median OOS Sharpe": np.median(sharpes),
-                            "Mean OOS Sharpe": np.mean(sharpes),
-                            "Std OOS Sharpe": np.std(sharpes)
-                        })
-
-                    ranking_df = pd.DataFrame(ranking_data).sort_values(
-                        "Median OOS Sharpe", ascending=False
-                    )
-
-                    st.markdown(
-                        create_styled_table(ranking_df.round(3)),
-                        unsafe_allow_html=True
-                    )
-
-                    st.info(
-                        "Ranking is based on **median OOS Sharpe**, not on a single backtest.\n\n"
-                        "This reduces selection bias and aligns with AFML best practices."
-                    )
-                    # ============================================================
-                    # 🧠 INTERPRETATION & FINAL RECAP (AFML STYLE)
-                    # ============================================================
-
-                    st.markdown("---")
-                    st.markdown("## 🧠 Interpretation & Final Recap")
-
-                    # ==========================
-                    # BUILD SUMMARY STATISTICS
-                    # ==========================
-                    summary_rows = []
-                    for method, sharpes in oos_sharpes.items():
-                        summary_rows.append({
-                            "Strategy": method_names.get(method, method),
-                            "Median OOS Sharpe": np.median(sharpes),
-                            "Mean OOS Sharpe": np.mean(sharpes),
-                            "Std OOS Sharpe": np.std(sharpes),
-                            "Min OOS Sharpe": np.min(sharpes),
-                            "Max OOS Sharpe": np.max(sharpes)
-                        })
-
-                    summary_df = (
-                        pd.DataFrame(summary_rows)
-                        .sort_values("Median OOS Sharpe", ascending=False)
-                    )
-
-                    st.markdown(
-                        create_styled_table(summary_df.round(3)),
-                        unsafe_allow_html=True
-                    )
-
-                    st.markdown(
-                        """
-                    **How to read this table:**
-                    - **Median OOS Sharpe** → typical performance across time regimes (most important)
-                    - **Std OOS Sharpe** → stability (lower = more robust)
-                    - **Min / Max** → tail risk and lucky runs
-                    """
-                    )
-
-                    # ==========================
-                    # PBO INTERPRETATION
-                    # ==========================
-                    st.markdown("### 📉 Overfitting Assessment")
-
-                    if pbo < 0.1:
-                        pbo_msg = "🟢 **Very low probability of overfitting**. The validation results are highly reliable."
-                    elif pbo < 0.3:
-                        pbo_msg = "🟡 **Moderate overfitting risk**. Results are acceptable but should be monitored."
-                    elif pbo < 0.5:
-                        pbo_msg = "🟠 **High risk of overfitting**. Strategy selection may not be stable."
-                    else:
-                        pbo_msg = "🔴 **Severe overfitting detected**. Apparent performance is likely due to chance."
-
-                    st.markdown(f"""
-                    **Probability of Backtest Overfitting (PBO): `{pbo:.2%}`**
-
-                    {pbo_msg}
-
-                    **Interpretation**  
-                    PBO answers the question:
-
-                    > *"How often does the strategy that looks best in-sample fail out-of-sample?"*
-
-                    Lower is better. Values above **30%** should be treated with caution.
-                    """)
-
-                    # ==========================
-                    # ROBUST STRATEGY ANALYSIS
-                    # ==========================
-                    best_strategy = summary_df.iloc[0]
-                    worst_strategy = summary_df.iloc[-1]
-
-                    st.markdown("### 🏆 Robustness Analysis")
-
-                    st.markdown(f"""
-                    - **Most robust strategy**: **{best_strategy['Strategy']}**
-                    - Median OOS Sharpe: **{best_strategy['Median OOS Sharpe']:.2f}**
-                    - Dispersion (Std): **{best_strategy['Std OOS Sharpe']:.2f}**
-                    - Indicates **consistent performance across multiple market regimes**.
-
-                    - **Least robust strategy**: **{worst_strategy['Strategy']}**
-                    - Median OOS Sharpe: **{worst_strategy['Median OOS Sharpe']:.2f}**
-                    - High variability suggests **sensitivity to regime and parameter instability**.
-                    """)
-
-                    # ==========================
-                    # FINAL TAKEAWAY
-                    # ==========================
-                    st.markdown("### 🎯 Final Takeaway")
-
-                    st.info("""
-                    This validation **does not aim to identify the single best strategy**.
-
-                    Instead, it evaluates:
-                    - **Robustness to time variation**
-                    - **Stability of performance**
-                    - **Reliability of the selection process**
-
-                    **Best practice (AFML):**
-                    - Prefer strategies with **high median OOS Sharpe**
-                    - Penalize high dispersion
-                    - Avoid strategy selection if **PBO > 30%**
-                    - Treat extreme Sharpe values as **potential overfitting**
-                    """)
 # Part 8: Frontier, Benchmark, Export, Footer
 
         # TAB 7: FRONTIER
