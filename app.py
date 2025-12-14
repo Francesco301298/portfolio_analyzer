@@ -1496,10 +1496,12 @@ with tab6:
     )
 
     method_names = {
-        "equal": "Equally Weighted",
-        "min_vol": "Minimum Volatility",
-        "max_sharpe": "Maximum Sharpe",
-        "risk_parity": "Risk Parity"
+        "Equally Weighted Portfolio": "Equally Weighted",
+        "Minimum Volatility Portfolio": "Minimum Volatility",
+        "Maximum Sharpe Portfolio": "Maximum Sharpe",
+        "Risk Parity Portfolio": "Risk Parity",
+        "Maximum Return Portfolio": "Maximum Return",
+        "Hierarchical Risk Parity Portfolio": "Hierarchical Risk Parity"
     }
 
     # Primary metric for PBO calculation
