@@ -1316,164 +1316,222 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
 
         # TAB 6: BACKTEST VALIDATION
         with tab6:
-            st.markdown("### 🧪 Backtest Validation (Walk-Forward Analysis)")
+            st.markdown("### 🧪 Backtest Validation (AFML – Combinatorial Purged CV)")
             st.markdown("""
-            **Walk-Forward Analysis** validates portfolio strategies by splitting data into:
-            - **Training (In-Sample)**: Optimize portfolio weights
-            - **Testing (Out-of-Sample)**: Validate with fixed weights
+            This validation framework follows **López de Prado (2018, Ch.7)**:
             
-            *References: López de Prado (2018), Pardo (2008)*
+            - **Combinatorial Purged Cross-Validation**
+            - **Embargo to prevent information leakage**
+            - **Out-of-Sample performance distributions**
+            - **Probability of Backtest Overfitting (PBO)**
+
+            This tab is designed for **research-grade strategy validation**, not point-estimate backtests.
             """)
-            
             st.markdown("---")
-            
-            # Configuration
-            col1, col2, col3 = st.columns(3)
+
+            # ==========================
+            # CONFIGURATION
+            # ==========================
+            col1, col2 = st.columns(2)
             with col1:
-                split_scheme = st.selectbox("Split Scheme", ["70/30", "80/20", "60/40"], key="split_scheme")
+                n_splits = st.selectbox("Number of folds (K)", [5, 6, 8], index=0)
             with col2:
-                validation_type = st.selectbox("Validation Type", ["Single Split", "Rolling (3 folds)", "Rolling (5 folds)"], key="val_type")
-            with col3:
-                methods_to_test = st.multiselect("Strategies", ["equal", "min_vol", "max_sharpe", "risk_parity"],
-                    default=["equal", "min_vol", "max_sharpe", "risk_parity"], key="bt_methods")
-            
-            method_names = {'equal': 'Equally Weighted', 'min_vol': 'Minimum Volatility', 'max_sharpe': 'Maximum Sharpe', 'risk_parity': 'Risk Parity'}
-            
-            if st.button("🚀 Run Backtest", use_container_width=True, key="run_backtest"):
+                n_test_splits = st.selectbox("Test folds per split", [1, 2], index=1)
+
+            embargo_pct = st.slider(
+                "Embargo (% of dataset)",
+                min_value=0.0,
+                max_value=5.0,
+                value=1.0,
+                step=0.25
+            ) / 100
+
+            methods_to_test = st.multiselect(
+                "Strategies",
+                ["equal", "min_vol", "max_sharpe", "risk_parity"],
+                default=["equal", "min_vol", "max_sharpe", "risk_parity"]
+            )
+
+            method_names = {
+                "equal": "Equally Weighted",
+                "min_vol": "Minimum Volatility",
+                "max_sharpe": "Maximum Sharpe",
+                "risk_parity": "Risk Parity"
+            }
+
+            # ==========================
+            # CORE FUNCTIONS (AFML)
+            # ==========================
+            from itertools import combinations
+
+            def combinatorial_purged_cv(dates, n_splits, n_test_splits, embargo_pct):
+                fold_size = len(dates) // n_splits
+                folds = [dates[i*fold_size:(i+1)*fold_size] for i in range(n_splits)]
+
+                splits = []
+                for test_folds in combinations(range(n_splits), n_test_splits):
+                    test_idx = pd.Index([])
+                    for f in test_folds:
+                        test_idx = test_idx.append(folds[f])
+
+                    train_idx = dates.difference(test_idx)
+
+                    # Embargo
+                    embargo = int(len(dates) * embargo_pct)
+                    if embargo > 0:
+                        test_start = test_idx.min()
+                        embargo_dates = dates[(dates >= test_start)][:embargo]
+                        train_idx = train_idx.difference(embargo_dates)
+
+                    splits.append((train_idx.sort_values(), test_idx.sort_values()))
+
+                return splits
+
+
+            def run_cpcv_backtest(returns, methods, rf_rate, n_splits, n_test_splits, embargo_pct):
+                splits = combinatorial_purged_cv(
+                    returns.index, n_splits, n_test_splits, embargo_pct
+                )
+
+                oos_sharpes = {m: [] for m in methods}
+                oos_returns = {m: [] for m in methods}
+
+                for train_idx, test_idx in splits:
+                    train_ret = returns.loc[train_idx]
+                    test_ret = returns.loc[test_idx]
+
+                    for method in methods:
+                        weights = optimize_portfolio(train_ret, method, rf_rate)
+                        test_portfolio_returns = test_ret @ weights
+
+                        oos_returns[method].append(test_portfolio_returns)
+                        oos_sharpes[method].append(
+                            compute_sharpe(test_portfolio_returns, rf_rate)
+                        )
+
+                return oos_sharpes, oos_returns
+
+
+            def compute_pbo(oos_sharpes):
+                sharpe_df = pd.DataFrame(oos_sharpes)
+
+                ranks = sharpe_df.rank(axis=1, ascending=False)
+                best_is = ranks.idxmin(axis=1)
+
+                oos_rank = [ranks.loc[i, best_is[i]] for i in ranks.index]
+                oos_rank = np.array(oos_rank)
+
+                logit = np.log(oos_rank / (len(oos_sharpes) - oos_rank))
+                return np.mean(logit < 0)
+
+
+            # ==========================
+            # RUN BACKTEST
+            # ==========================
+            if st.button("🚀 Run AFML Validation", use_container_width=True):
                 if not methods_to_test:
-                    st.error("Select at least one strategy!")
+                    st.error("Select at least one strategy.")
                 else:
-                    train_ratio = float(split_scheme.split('/')[0]) / 100
-                    
-                    with st.spinner("Running Walk-Forward Analysis..."):
-                        results, train_end = run_walk_forward_analysis(analyzer.returns, train_ratio=train_ratio, methods=methods_to_test, rf_rate=rf_rate)
-                    
-                    all_dates = analyzer.returns.index
-                    train_dates = all_dates[:train_end]
-                    test_dates = all_dates[train_end:]
-                    
-                    st.success(f"✅ Complete! Train: {len(train_dates)} days | Test: {len(test_dates)} days")
+                    with st.spinner("Running Combinatorial Purged Cross-Validation..."):
+                        oos_sharpes, oos_returns = run_cpcv_backtest(
+                            analyzer.returns,
+                            methods_to_test,
+                            rf_rate,
+                            n_splits,
+                            n_test_splits,
+                            embargo_pct
+                        )
+
+                        pbo = compute_pbo(oos_sharpes)
+
+                    st.success("✅ Validation completed")
                     st.markdown("---")
-                    
-                    # 1. Performance Chart
-                    st.markdown("#### 📊 Cumulative Performance (Train vs Test)")
-                    
+
+                    # ==========================
+                    # PBO METRIC
+                    # ==========================
+                    st.markdown("#### 📉 Probability of Backtest Overfitting")
+                    st.metric(
+                        "PBO",
+                        f"{pbo:.2%}",
+                        help="Probability that the best in-sample strategy underperforms out-of-sample."
+                    )
+                    st.markdown("---")
+
+                    # ==========================
+                    # OOS SHARPE DISTRIBUTIONS
+                    # ==========================
+                    st.markdown("#### 📊 Out-of-Sample Sharpe Distributions")
+
                     fig = go.Figure()
-                    fig.add_vrect(x0=train_dates[0], x1=train_dates[-1], fillcolor="rgba(99, 102, 241, 0.1)", layer="below", line_width=0,
-                                 annotation_text="TRAIN", annotation_position="top left")
-                    fig.add_vrect(x0=test_dates[0], x1=test_dates[-1], fillcolor="rgba(16, 185, 129, 0.1)", layer="below", line_width=0,
-                                 annotation_text="TEST", annotation_position="top left")
-                    
-                    for i, (method, res) in enumerate(results.items()):
-                        all_returns = pd.concat([res['train_returns'], res['test_returns']])
-                        cum_val = (1 + all_returns).cumprod() * 100
-                        fig.add_trace(go.Scatter(x=cum_val.index, y=cum_val.values, name=method_names.get(method, method),
-                            mode='lines', line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2)))
-                    
-                    fig.add_vline(x=train_dates[-1], line_dash="dash", line_color="white", line_width=2)
-                    fig.update_layout(height=400, hovermode='x unified', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
-                    fig = apply_plotly_theme(fig)
-                    st.plotly_chart(fig, use_container_width=True)
-                    
+                    for i, (method, sharpes) in enumerate(oos_sharpes.items()):
+                        fig.add_trace(go.Box(
+                            y=sharpes,
+                            name=method_names.get(method, method),
+                            boxmean=True,
+                            marker_color=CHART_COLORS[i % len(CHART_COLORS)]
+                        ))
+
+                    fig.update_layout(
+                        height=400,
+                        yaxis_title="Sharpe Ratio",
+                        showlegend=False
+                    )
+                    st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
+
                     st.markdown("---")
-                    
-                    # 2. Metrics Comparison
-                    st.markdown("#### 📋 In-Sample vs Out-of-Sample Metrics")
-                    
-                    comparison_rows = []
-                    for method, res in results.items():
-                        train_m, test_m = res['train_metrics'], res['test_metrics']
-                        comparison_rows.append({
-                            'Strategy': method_names.get(method, method),
-                            'Train Return': f"{train_m['return']*100:.2f}%", 'Test Return': f"{test_m['return']*100:.2f}%",
-                            'Δ Return': f"{(test_m['return'] - train_m['return'])*100:+.2f}%",
-                            'Train Sharpe': f"{train_m['sharpe']:.3f}", 'Test Sharpe': f"{test_m['sharpe']:.3f}",
-                            'Stability': f"{res['stability_ratio']:.2f}"
+
+                    # ==========================
+                    # OOS RETURN DISTRIBUTIONS
+                    # ==========================
+                    st.markdown("#### 📈 Out-of-Sample Return Distributions")
+
+                    fig = go.Figure()
+                    for i, (method, ret_list) in enumerate(oos_returns.items()):
+                        flat_returns = pd.concat(ret_list)
+                        fig.add_trace(go.Histogram(
+                            x=flat_returns.values * 100,
+                            name=method_names.get(method, method),
+                            opacity=0.65,
+                            marker_color=CHART_COLORS[i % len(CHART_COLORS)]
+                        ))
+
+                    fig.update_layout(
+                        height=350,
+                        barmode="overlay",
+                        xaxis_title="Daily Return (%)"
+                    )
+                    st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
+
+                    st.markdown("---")
+
+                    # ==========================
+                    # ROBUST RANKING (MEDIAN OOS)
+                    # ==========================
+                    st.markdown("#### 🏆 Robust Out-of-Sample Ranking")
+
+                    ranking_data = []
+                    for method, sharpes in oos_sharpes.items():
+                        ranking_data.append({
+                            "Strategy": method_names.get(method, method),
+                            "Median OOS Sharpe": np.median(sharpes),
+                            "Mean OOS Sharpe": np.mean(sharpes),
+                            "Std OOS Sharpe": np.std(sharpes)
                         })
-                    st.markdown(create_styled_table(pd.DataFrame(comparison_rows)), unsafe_allow_html=True)
-                    st.markdown("*Stability Ratio = Test Sharpe / Train Sharpe (ideal ≈ 1.0, <0.5 suggests overfitting)*")
-                    
-                    st.markdown("---")
-                    
-                    # 3. Distribution
-                    st.markdown("#### 📊 Return Distributions")
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.markdown("**Training Period**")
-                        fig = go.Figure()
-                        for i, (method, res) in enumerate(results.items()):
-                            fig.add_trace(go.Histogram(x=res['train_returns'].values * 100, name=method_names.get(method, method),
-                                opacity=0.7, marker_color=CHART_COLORS[i % len(CHART_COLORS)]))
-                        fig.update_layout(height=280, barmode='overlay', xaxis_title="Daily Return (%)")
-                        fig = apply_plotly_theme(fig)
-                        st.plotly_chart(fig, use_container_width=True)
-                    
-                    with col2:
-                        st.markdown("**Testing Period**")
-                        fig = go.Figure()
-                        for i, (method, res) in enumerate(results.items()):
-                            fig.add_trace(go.Histogram(x=res['test_returns'].values * 100, name=method_names.get(method, method),
-                                opacity=0.7, marker_color=CHART_COLORS[i % len(CHART_COLORS)]))
-                        fig.update_layout(height=280, barmode='overlay', xaxis_title="Daily Return (%)")
-                        fig = apply_plotly_theme(fig)
-                        st.plotly_chart(fig, use_container_width=True)
-                    
-                    st.markdown("---")
-                    
-                    # 4. Risk Metrics
-                    st.markdown("#### ⚠️ Risk Metrics")
-                    risk_rows = []
-                    for method, res in results.items():
-                        train_m, test_m = res['train_metrics'], res['test_metrics']
-                        risk_rows.append({
-                            'Strategy': method_names.get(method, method),
-                            'Train Vol': f"{train_m['volatility']*100:.2f}%", 'Test Vol': f"{test_m['volatility']*100:.2f}%",
-                            'Train MaxDD': f"{train_m['max_drawdown']*100:.2f}%", 'Test MaxDD': f"{test_m['max_drawdown']*100:.2f}%",
-                            'Train VaR': f"{train_m['var_5']*100:.2f}%", 'Test VaR': f"{test_m['var_5']*100:.2f}%"
-                        })
-                    st.markdown(create_styled_table(pd.DataFrame(risk_rows)), unsafe_allow_html=True)
-                    
-                    st.markdown("---")
-                    
-                    # 5. Ranking
-                    st.markdown("#### 🏆 Out-of-Sample Ranking")
-                    ranking_data = [{'method': m, 'name': method_names.get(m, m), 'test_sharpe': r['test_metrics']['sharpe'],
-                                    'test_return': r['test_metrics']['return'], 'stability': r['stability_ratio']} for m, r in results.items()]
-                    ranking_df = pd.DataFrame(ranking_data).sort_values('test_sharpe', ascending=False)
-                    
-                    for i, (_, row) in enumerate(ranking_df.iterrows()):
-                        medal = ["🥇", "🥈", "🥉", "4️⃣"][i] if i < 4 else f"{i+1}."
-                        stab_emoji = "✅" if row['stability'] > 0.7 else "⚠️" if row['stability'] > 0.3 else "❌"
-                        st.markdown(f"{medal} **{row['name']}** - Sharpe: {row['test_sharpe']:.3f} | Return: {row['test_return']*100:.2f}% | Stability: {stab_emoji} {row['stability']:.2f}")
-                    
-                    st.markdown("---")
-                    
-                    # 6. Overfitting Analysis
-                    st.markdown("#### 🔍 Overfitting Analysis")
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.markdown("**Sharpe Ratio Decay**")
-                        fig = go.Figure()
-                        methods_list = list(results.keys())
-                        train_sharpes = [results[m]['train_metrics']['sharpe'] for m in methods_list]
-                        test_sharpes = [results[m]['test_metrics']['sharpe'] for m in methods_list]
-                        fig.add_trace(go.Bar(x=[method_names.get(m, m) for m in methods_list], y=train_sharpes, name='Train', marker_color='#6366F1'))
-                        fig.add_trace(go.Bar(x=[method_names.get(m, m) for m in methods_list], y=test_sharpes, name='Test', marker_color='#10B981'))
-                        fig.update_layout(height=300, barmode='group', yaxis_title="Sharpe Ratio")
-                        fig = apply_plotly_theme(fig)
-                        st.plotly_chart(fig, use_container_width=True)
-                    
-                    with col2:
-                        st.markdown("**Stability Analysis**")
-                        stab_data = []
-                        for method, res in results.items():
-                            stability = res['stability_ratio']
-                            status = "🟢 Excellent" if stability > 0.8 else "🟡 Good" if stability > 0.5 else "🟠 Moderate" if stability > 0.3 else "🔴 Poor"
-                            stab_data.append({'Strategy': method_names.get(method, method), 'Stability': f"{stability:.2f}", 'Status': status})
-                        st.markdown(create_styled_table(pd.DataFrame(stab_data)), unsafe_allow_html=True)
-                        st.info("🟢 >0.8: Excellent | 🟡 0.5-0.8: Good | 🟠 0.3-0.5: Caution | 🔴 <0.3: Overfitting")
+
+                    ranking_df = pd.DataFrame(ranking_data).sort_values(
+                        "Median OOS Sharpe", ascending=False
+                    )
+
+                    st.markdown(
+                        create_styled_table(ranking_df.round(3)),
+                        unsafe_allow_html=True
+                    )
+
+                    st.info(
+                        "Ranking is based on **median OOS Sharpe**, not on a single backtest.\n\n"
+                        "This reduces selection bias and aligns with AFML best practices."
+                    )
 # Part 8: Frontier, Benchmark, Export, Footer
 
         # TAB 7: FRONTIER
