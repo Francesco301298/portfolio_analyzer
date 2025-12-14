@@ -1,4 +1,4 @@
-"""Portfolio Analyzer Pro - v5.0 with Deep-dive Statistics"""
+"""Portfolio Analyzer Pro - v6.0 with Yahoo Finance Search"""
 
 import streamlit as st
 import pandas as pd
@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import json
 import warnings
 from scipy import stats
+import requests
 
 warnings.filterwarnings('ignore')
 
@@ -25,7 +26,6 @@ try:
 except ImportError:
     OPENPYXL_AVAILABLE = False
 
-# Try to import arch for GARCH
 try:
     from arch import arch_model
     ARCH_AVAILABLE = True
@@ -256,6 +256,22 @@ p, li, span, label { color: var(--text-secondary); }
 
 .stAlert { border-radius: 8px; }
 
+/* Search result styling */
+.search-result {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 0.5rem;
+    margin: 0.25rem 0;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.search-result:hover {
+    border-color: var(--accent-primary);
+    background: rgba(99,102,241,0.1);
+}
+
 @media screen and (max-width: 640px) {
     .hero-title { font-size: 1.5rem !important; }
     .hero-subtitle { font-size: 0.7rem; }
@@ -270,7 +286,56 @@ p, li, span, label { color: var(--text-secondary); }
 </style>
 """, unsafe_allow_html=True)
 
-# Ticker Database - Updated with Commodities
+# Yahoo Finance Search Function
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def search_yahoo_finance(query):
+    """Search Yahoo Finance for tickers matching the query"""
+    if not query or len(query) < 1:
+        return []
+    
+    try:
+        # Yahoo Finance search API endpoint
+        url = f"https://query1.finance.yahoo.com/v1/finance/search"
+        params = {
+            'q': query,
+            'quotesCount': 15,
+            'newsCount': 0,
+            'listsCount': 0,
+            'enableFuzzyQuery': True,
+            'quotesQueryId': 'tss_match_phrase_query'
+        }
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(url, params=params, headers=headers, timeout=5)
+        
+        if response.status_code == 200:
+            data = response.json()
+            results = []
+            
+            for quote in data.get('quotes', []):
+                ticker = quote.get('symbol', '')
+                name = quote.get('shortname') or quote.get('longname') or ticker
+                exchange = quote.get('exchange', '')
+                quote_type = quote.get('quoteType', '')
+                
+                # Filter out unwanted types
+                if quote_type in ['EQUITY', 'ETF', 'INDEX', 'CRYPTOCURRENCY', 'MUTUALFUND', 'CURRENCY']:
+                    results.append({
+                        'symbol': ticker,
+                        'name': name,
+                        'exchange': exchange,
+                        'type': quote_type
+                    })
+            
+            return results
+        else:
+            return []
+    except Exception as e:
+        return []
+
+# Ticker Database (local for quick access)
 TICKER_INFO = {
     "AAPL": "Apple", "MSFT": "Microsoft", "GOOGL": "Alphabet (Google)", "AMZN": "Amazon",
     "META": "Meta (Facebook)", "NVDA": "NVIDIA", "AMD": "AMD", "INTC": "Intel",
@@ -308,7 +373,6 @@ TICKER_INFO = {
     "SHY": "iShares 1-3 Year Treasury", "AGG": "iShares Core US Aggregate",
     "BND": "Vanguard Total Bond", "LQD": "iShares Investment Grade Corp",
     "HYG": "iShares High Yield Corp", "TIP": "iShares TIPS Bond",
-    # Commodities - Updated
     "GLD": "SPDR Gold Shares", "IAU": "iShares Gold Trust", "SLV": "iShares Silver Trust",
     "GDX": "VanEck Gold Miners", "GDXJ": "VanEck Junior Gold Miners",
     "USO": "United States Oil Fund", "UNG": "United States Natural Gas",
@@ -333,7 +397,13 @@ TICKER_DATABASE = {
 }
 
 def get_display_name(ticker):
+    """Get display name, checking local database first then returning ticker"""
     return TICKER_INFO.get(ticker, ticker)
+
+def update_ticker_info(ticker, name):
+    """Add new ticker to local database"""
+    if ticker not in TICKER_INFO:
+        TICKER_INFO[ticker] = name
 
 CHART_COLORS = ['#FF6B6B','#4ECDC4','#FFE66D','#95E1D3','#F38181','#AA96DA','#FCBAD3','#A8D8EA','#FF9F43','#6C5CE7']
 
@@ -368,7 +438,6 @@ def create_styled_table(df, title=""):
 
 # Deep-dive Statistics Functions
 def compute_autocorrelation(x, max_lag):
-    """Compute autocorrelation for lags 1 to max_lag"""
     n = len(x)
     x_centered = x - np.mean(x)
     var_x = np.var(x)
@@ -382,41 +451,24 @@ def compute_autocorrelation(x, max_lag):
     return np.array(acf)
 
 def invariance_test_ellipsoid(eps, l_bar, conf_lev=0.95):
-    """
-    Perform ellipsoid test for invariance based on autocorrelations.
-    Returns autocorrelations, confidence intervals, and test result.
-    """
     t_bar = len(eps)
     acf = compute_autocorrelation(eps, l_bar)
-    
-    # Confidence interval (approximate)
     conf_int = stats.norm.ppf((1 + conf_lev) / 2) / np.sqrt(t_bar)
-    
-    # Test: check if all autocorrelations are within confidence interval
     test_passed = np.all(np.abs(acf) < conf_int)
-    
     return acf, conf_int, test_passed
 
 def ks_test(eps):
-    """Perform Kolmogorov-Smirnov test for normality"""
-    # Standardize
     eps_std = (eps - np.mean(eps)) / np.std(eps)
-    # KS test against standard normal
     ks_stat, p_value = stats.kstest(eps_std, 'norm')
     return ks_stat, p_value
 
 def fit_garch(returns):
-    """Fit GARCH(1,1) model and return parameters and residuals"""
     if not ARCH_AVAILABLE:
         return None, None, None
-    
     try:
         model = arch_model(returns, vol='garch', p=1, o=0, q=1, rescale=False)
         result = model.fit(disp='off')
-        params = result.params
-        std_resid = result.std_resid
-        cond_vol = result.conditional_volatility
-        return params, std_resid, cond_vol
+        return result.params, result.std_resid, result.conditional_volatility
     except:
         return None, None, None
 
@@ -424,12 +476,12 @@ def fit_garch(returns):
 defaults = {
     'analyzer': None, 'analysis_complete': False, 'selected_tickers': [],
     'benchmark': '^GSPC', 'use_benchmark': True, 'benchmark_returns': None,
-    'run_analysis': False, 'alerts': []
+    'run_analysis': False, 'alerts': [], 'yf_search_results': [], 'yf_selected': []
 }
 for key, val in defaults.items():
     if key not in st.session_state:
         st.session_state[key] = val
-# Part 2: Header and Sidebar (NO Select All)
+# Part 2: Header and Sidebar with Yahoo Finance Search
 
 # Header
 st.markdown("""
@@ -445,18 +497,19 @@ st.markdown("---")
 with st.sidebar:
     st.markdown("## ⚙️ Configuration")
     
-    selection_method = st.radio("Selection Method", ["📋 Database", "✍️ Manual"], horizontal=True, key="sel_method")
+    selection_method = st.radio("Selection Method", ["📋 Database", "🔍 Yahoo Search", "✍️ Manual"], horizontal=True, key="sel_method")
     
     selected_symbols = []
     
+    # METHOD 1: Database
     if selection_method == "📋 Database":
-        st.markdown("#### 📚 Select Assets")
-        search_query = st.text_input("🔍 Search", placeholder="e.g., Apple, Gold...", key="search")
+        st.markdown("#### 📚 Select from Categories")
+        search_filter = st.text_input("🔍 Filter", placeholder="Filter database...", key="db_filter")
         
         for category, tickers in TICKER_DATABASE.items():
             with st.expander(category, expanded=False):
-                if search_query:
-                    filtered = [t for t in tickers if search_query.upper() in t.upper() or search_query.upper() in get_display_name(t).upper()]
+                if search_filter:
+                    filtered = [t for t in tickers if search_filter.upper() in t.upper() or search_filter.upper() in get_display_name(t).upper()]
                 else:
                     filtered = tickers
                 
@@ -464,14 +517,75 @@ with st.sidebar:
                     cols = st.columns(2)
                     for idx, ticker in enumerate(filtered):
                         with cols[idx % 2]:
-                            if st.checkbox(get_display_name(ticker), key=f"cb_{category}_{ticker}"):
+                            if st.checkbox(get_display_name(ticker), key=f"db_{category}_{ticker}"):
                                 selected_symbols.append(ticker)
+    
+    # METHOD 2: Yahoo Finance Search (NEW!)
+    elif selection_method == "🔍 Yahoo Search":
+        st.markdown("#### 🌐 Search Yahoo Finance")
+        st.caption("Search any stock, ETF, index, crypto worldwide!")
+        
+        # Search input
+        yf_query = st.text_input("🔍 Search", placeholder="e.g., Tesla, Bitcoin, FTSE...", key="yf_search_input")
+        
+        # Search button
+        if st.button("🔎 Search", key="yf_search_btn", use_container_width=True):
+            if yf_query and len(yf_query) >= 1:
+                with st.spinner("Searching Yahoo Finance..."):
+                    results = search_yahoo_finance(yf_query)
+                    st.session_state.yf_search_results = results
+        
+        # Display search results
+        if st.session_state.yf_search_results:
+            st.markdown("---")
+            st.markdown(f"**📋 Results ({len(st.session_state.yf_search_results)})**")
+            
+            for i, result in enumerate(st.session_state.yf_search_results):
+                symbol = result['symbol']
+                name = result['name']
+                exchange = result['exchange']
+                qtype = result['type']
+                
+                # Type emoji
+                type_emoji = {"EQUITY": "📈", "ETF": "📊", "INDEX": "📉", "CRYPTOCURRENCY": "💎", "MUTUALFUND": "🏦", "CURRENCY": "💱"}.get(qtype, "📄")
+                
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.markdown(f"{type_emoji} **{symbol}**")
+                    st.caption(f"{name[:30]}{'...' if len(name) > 30 else ''} • {exchange}")
+                with col2:
+                    if st.button("➕", key=f"add_yf_{i}_{symbol}", help=f"Add {symbol}"):
+                        if symbol not in st.session_state.yf_selected:
+                            st.session_state.yf_selected.append(symbol)
+                            # Update ticker info
+                            update_ticker_info(symbol, name)
+                            st.rerun()
+            
+            st.markdown("---")
+        
+        # Show selected from Yahoo search
+        if st.session_state.yf_selected:
+            st.markdown("#### ✅ Selected from Search")
+            for symbol in st.session_state.yf_selected:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.markdown(f"• **{symbol}** - {get_display_name(symbol)}")
+                with col2:
+                    if st.button("❌", key=f"rem_yf_{symbol}", help=f"Remove {symbol}"):
+                        st.session_state.yf_selected.remove(symbol)
+                        st.rerun()
+            
+            selected_symbols = st.session_state.yf_selected.copy()
+        else:
+            st.info("👆 Search and add tickers above")
+    
+    # METHOD 3: Manual
     else:
         st.markdown("#### ✍️ Manual Entry")
         manual_input = st.text_area(
             "Enter tickers (comma or newline separated)",
             height=100,
-            placeholder="AAPL, MSFT, GOOGL, AMZN",
+            placeholder="AAPL, MSFT, GOOGL, AMZN\nTSLA, NVDA",
             help="Use Yahoo Finance ticker symbols",
             key="manual_tickers"
         )
@@ -479,6 +593,14 @@ with st.sidebar:
             import re
             selected_symbols = [s.strip().upper() for s in re.split('[,\n]', manual_input) if s.strip()]
     
+    # Combine with any previously selected via YF search
+    if selection_method != "🔍 Yahoo Search" and st.session_state.yf_selected:
+        # Add Yahoo search selections to database/manual selections
+        for sym in st.session_state.yf_selected:
+            if sym not in selected_symbols:
+                selected_symbols.append(sym)
+    
+    # Remove duplicates
     selected_symbols = list(dict.fromkeys(selected_symbols))
     
     st.markdown("---")
@@ -512,7 +634,7 @@ with st.sidebar:
     if selected_symbols:
         with st.expander("View selected", expanded=False):
             for t in selected_symbols[:20]:
-                st.markdown(f"• {get_display_name(t)}")
+                st.markdown(f"• {get_display_name(t)} ({t})")
             if len(selected_symbols) > 20:
                 st.markdown(f"*...and {len(selected_symbols) - 20} more*")
     
@@ -534,9 +656,11 @@ with st.sidebar:
             st.session_state.selected_tickers = []
             st.session_state.benchmark_returns = None
             st.session_state.run_analysis = False
+            st.session_state.yf_search_results = []
+            st.session_state.yf_selected = []
             st.rerun()
 
-# Main Content
+# Main Content - Landing Page
 if not st.session_state.run_analysis and st.session_state.analyzer is None:
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -551,12 +675,12 @@ if not st.session_state.run_analysis and st.session_state.analyzer is None:
         </div>""", unsafe_allow_html=True)
     with col2:
         st.markdown("""<div class='dashboard-card'>
-            <h3>📚 Database</h3>
-            <p>Access to <strong>100+</strong> assets:</p>
+            <h3>🔍 Yahoo Search</h3>
+            <p>NEW! Search <strong>any ticker</strong> on Yahoo Finance:</p>
             <ul>
-                <li>US Stocks by sector</li>
-                <li>ETFs & Indices</li>
-                <li>Crypto, Bonds & Commodities</li>
+                <li>Global stocks & indices</li>
+                <li>ETFs & Mutual Funds</li>
+                <li>Crypto & Commodities</li>
             </ul>
         </div>""", unsafe_allow_html=True)
     with col3:
