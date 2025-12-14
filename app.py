@@ -1400,20 +1400,26 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 returns_excess = returns - rf_rate
                 
                 # 1. SHARPE RATIO (volatility-adjusted)
+                # Formula: (Annualized Return - Risk Free) / Annualized Volatility
                 if returns.std() > 0:
-                    sharpe = returns_excess.mean() / returns.std() * np.sqrt(252)
+                    annual_return = returns.mean() * 252
+                    annual_vol = returns.std() * np.sqrt(252)
+                    sharpe = (annual_return - rf_rate * 252) / annual_vol
                 else:
                     sharpe = np.nan
                 
                 # 2. SORTINO RATIO (downside risk only)
+                # Formula: (Annualized Return - Risk Free) / Annualized Downside Deviation
                 downside_returns = returns[returns < 0]
                 if len(downside_returns) > 0:
+                    annual_return = returns.mean() * 252
                     downside_std = downside_returns.std() * np.sqrt(252)
                     if downside_std > 0:
-                        sortino = returns_excess.mean() * np.sqrt(252) / downside_std
+                        sortino = (annual_return - rf_rate * 252) / downside_std
                     else:
                         sortino = np.nan
                 else:
+                    # No negative returns - strategy never loses
                     sortino = np.inf if returns.mean() > 0 else np.nan
                 
                 # 3. MAXIMUM DRAWDOWN
@@ -1926,7 +1932,6 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     - Out-of-sample metrics are closer to real-world performance
                     - No single metric tells the full story—consider the complete profile
                     """)
-
 # Part 8: Frontier, Benchmark, Export, Footer
 
         # TAB 7: FRONTIER
