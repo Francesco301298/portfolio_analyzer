@@ -156,7 +156,7 @@ h2 {
     margin-bottom: 1rem;
 }
 
-h3, h4 { color: var(--accent-primary) !important; font-weight: 600; }
+h3, h4, h5 { color: var(--accent-primary) !important; font-weight: 600; }
 p, li, span, label { color: var(--text-secondary); }
 
 .stTabs [data-baseweb="tab-list"] {
