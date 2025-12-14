@@ -1452,43 +1452,6 @@ with tab6:
         
         **Reference:** Bailey, D. H., & López de Prado, M. (2014). "The Probability of Backtest Overfitting." 
         *Journal of Computational Finance*, 20(4).
-        """)
-    
-    with st.expander("🔬 Why This Matters: Real-World Example"):
-        st.markdown("""
-        ### Case Study: The Overfitting Trap
-        
-        **Scenario:**
-        - Period: 2015-2024
-        - Assets: 5 tech stocks (AAPL, MSFT, GOOGL, AMZN, TSLA)
-        - Strategy: Maximum Sharpe optimization
-        
-        **Standard Backtest (Other Tabs):**
-        ```
-        Full-period Sharpe: 1.85 ✨
-        Max Drawdown: 25%
-        Annual Return: 18%
-        ```
-        
-        **Looks amazing!** But this is optimized on **all** data including bull markets, crashes, recoveries.
-        
-        **CPCV Validation (This Tab):**
-        ```
-        Median OOS Sharpe: 0.82 ⚠️
-        Std OOS Sharpe: 0.45
-        Max OOS Drawdown: 68% 🚨
-        PBO: 62%
-        
-        Split-by-split results:
-        - Bull market periods: Sharpe = 1.8
-        - Bear market periods: Sharpe = -0.3
-        - Recovery periods: Sharpe = 1.1
-        ```
-        
-        **Conclusion:** The strategy is **regime-dependent** and **overfitted** to the full-period data. 
-        The "real" Sharpe is closer to **0.8**, not 1.85.
-        
-        ---
         
         ### What You Learn From This Tab
         
