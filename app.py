@@ -1387,57 +1387,47 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
 
                 return splits
 
-            def get_portfolio_weights(returns, method, rf_rate):
-                """
-                Adapter function to map CPCV logic to existing optimization engine.
-                Modify ONLY this function if optimization logic changes.
-                """
 
-                # --- CASE 1: analyzer has optimization method ---
-                if hasattr(analyzer, "optimize_portfolio"):
-                    return analyzer.optimize_portfolio(returns, method, rf_rate)
-
-                # --- CASE 2: global optimization function exists ---
-                if "optimize_portfolio" in globals():
-                    return optimize_portfolio(returns, method, rf_rate)
-
-                # --- CASE 3: fallback manual mapping ---
-                if method == "equal":
-                    n = returns.shape[1]
-                    return np.ones(n) / n
-
-                elif method == "min_vol":
-                    return compute_min_vol_weights(returns)
-
-                elif method == "max_sharpe":
-                    return compute_max_sharpe_weights(returns, rf_rate)
-
-                elif method == "risk_parity":
-                    return compute_risk_parity_weights(returns)
-
-                else:
-                    raise ValueError(f"Unknown strategy: {method}")
-                    
-            def run_cpcv_backtest(returns, methods, rf_rate, n_splits, n_test_splits, embargo_pct):
+            def run_cpcv_backtest(
+                returns_df,
+                methods,
+                rf_rate,
+                n_splits=5,
+                n_test_splits=2,
+                embargo_pct=0.01
+            ):
                 splits = combinatorial_purged_cv(
-                    returns.index, n_splits, n_test_splits, embargo_pct
+                    returns_df.index,
+                    n_splits,
+                    n_test_splits,
+                    embargo_pct
                 )
 
                 oos_sharpes = {m: [] for m in methods}
                 oos_returns = {m: [] for m in methods}
 
                 for train_idx, test_idx in splits:
-                    train_ret = returns.loc[train_idx]
-                    test_ret = returns.loc[test_idx]
+                    train_returns = returns_df.loc[train_idx]
+                    test_returns = returns_df.loc[test_idx]
 
                     for method in methods:
-                        weights = get_portfolio_weights(train_ret, method, rf_rate)
-                        test_portfolio_returns = test_ret @ weights
+                        # 🔑 USE EXISTING OPTIMIZER
+                        weights = optimize_portfolio_weights(
+                            train_returns,
+                            method=method,
+                            rf_rate=rf_rate
+                        )
+
+                        test_portfolio_returns = test_returns.dot(weights)
+
+                        # 🔑 USE EXISTING METRICS FUNCTION
+                        metrics = calculate_portfolio_metrics(
+                            test_portfolio_returns,
+                            rf_rate=rf_rate
+                        )
 
                         oos_returns[method].append(test_portfolio_returns)
-                        oos_sharpes[method].append(
-                            compute_sharpe(test_portfolio_returns, rf_rate)
-                        )
+                        oos_sharpes[method].append(metrics['sharpe'])
 
                 return oos_sharpes, oos_returns
 
@@ -1445,15 +1435,18 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             def compute_pbo(oos_sharpes):
                 sharpe_df = pd.DataFrame(oos_sharpes)
 
+                # Rank strategies per split
                 ranks = sharpe_df.rank(axis=1, ascending=False)
                 best_is = ranks.idxmin(axis=1)
 
-                oos_rank = [ranks.loc[i, best_is[i]] for i in ranks.index]
-                oos_rank = np.array(oos_rank)
+                oos_rank = np.array([
+                    ranks.loc[i, best_is[i]] for i in ranks.index
+                ])
 
                 logit = np.log(oos_rank / (len(oos_sharpes) - oos_rank))
-                return np.mean(logit < 0)
+                pbo = np.mean(logit < 0)
 
+                return pbo
 
             # ==========================
             # RUN BACKTEST
