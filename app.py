@@ -1352,7 +1352,15 @@ with tab6:
        - Evaluate performance on **held-out test data** (e.g., 2015-2018)
        - Apply **embargo** to prevent information leakage
     4. **Aggregate results** across all splits to get a **distribution** of out-of-sample performance
-    
+
+        ### What You Learn From This Tab
+        
+        ✅ **Robustness:** Does the strategy work across different market regimes?  
+        ✅ **Stability:** How consistent is performance over time?  
+        ✅ **Overfitting Risk:** Is the high Sharpe due to skill or luck?  
+        ✅ **Tail Risk:** What's the worst-case scenario in unseen data?  
+        
+
     """)
     
     with st.expander("📚 Mathematical Framework"):
@@ -1453,14 +1461,6 @@ with tab6:
         **Reference:** Bailey, D. H., & López de Prado, M. (2014). "The Probability of Backtest Overfitting." 
         *Journal of Computational Finance*, 20(4).
         
-        ### What You Learn From This Tab
-        
-        ✅ **Robustness:** Does the strategy work across different market regimes?  
-        ✅ **Stability:** How consistent is performance over time?  
-        ✅ **Overfitting Risk:** Is the high Sharpe due to skill or luck?  
-        ✅ **Tail Risk:** What's the worst-case scenario in unseen data?  
-        
-        **Best Practice:** Use this tab **before** committing capital to any strategy.
         """)
     
     st.markdown("---")
