@@ -1387,7 +1387,37 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
 
                 return splits
 
+            def get_portfolio_weights(returns, method, rf_rate):
+                """
+                Adapter function to map CPCV logic to existing optimization engine.
+                Modify ONLY this function if optimization logic changes.
+                """
 
+                # --- CASE 1: analyzer has optimization method ---
+                if hasattr(analyzer, "optimize_portfolio"):
+                    return analyzer.optimize_portfolio(returns, method, rf_rate)
+
+                # --- CASE 2: global optimization function exists ---
+                if "optimize_portfolio" in globals():
+                    return optimize_portfolio(returns, method, rf_rate)
+
+                # --- CASE 3: fallback manual mapping ---
+                if method == "equal":
+                    n = returns.shape[1]
+                    return np.ones(n) / n
+
+                elif method == "min_vol":
+                    return compute_min_vol_weights(returns)
+
+                elif method == "max_sharpe":
+                    return compute_max_sharpe_weights(returns, rf_rate)
+
+                elif method == "risk_parity":
+                    return compute_risk_parity_weights(returns)
+
+                else:
+                    raise ValueError(f"Unknown strategy: {method}")
+                    
             def run_cpcv_backtest(returns, methods, rf_rate, n_splits, n_test_splits, embargo_pct):
                 splits = combinatorial_purged_cv(
                     returns.index, n_splits, n_test_splits, embargo_pct
@@ -1401,7 +1431,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     test_ret = returns.loc[test_idx]
 
                     for method in methods:
-                        weights = optimize_portfolio(train_ret, method, rf_rate)
+                        weights = get_portfolio_weights(train_ret, method, rf_rate)
                         test_portfolio_returns = test_ret @ weights
 
                         oos_returns[method].append(test_portfolio_returns)
