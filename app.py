@@ -1,4 +1,4 @@
-"""Portfolio Analyzer Pro - v7.0 with Backtest Validation"""
+"""Portfolio Analyzer Pro - v7.1 with Full Deep-dive and Backtest"""
 
 import streamlit as st
 import pandas as pd
@@ -227,10 +227,6 @@ p, li, span, label { color: var(--text-secondary); }
 .stCheckbox label { color: var(--text-secondary) !important; }
 .stAlert { border-radius: 8px; }
 
-/* Train/Test colors */
-.train-zone { background: rgba(99, 102, 241, 0.2); }
-.test-zone { background: rgba(16, 185, 129, 0.2); }
-
 @media screen and (max-width: 640px) {
     .hero-title { font-size: 1.5rem !important; }
     .dashboard-card { padding: 1rem; }
@@ -353,14 +349,8 @@ def calculate_portfolio_metrics(returns, rf_rate=0.02):
     cvar_5 = returns[returns <= var_5].mean() if len(returns[returns <= var_5]) > 0 else var_5
     
     return {
-        'return': ann_return,
-        'volatility': ann_vol,
-        'sharpe': sharpe,
-        'sortino': sortino,
-        'max_drawdown': max_dd,
-        'calmar': calmar,
-        'var_5': var_5,
-        'cvar_5': cvar_5,
+        'return': ann_return, 'volatility': ann_vol, 'sharpe': sharpe, 'sortino': sortino,
+        'max_drawdown': max_dd, 'calmar': calmar, 'var_5': var_5, 'cvar_5': cvar_5,
         'cumulative': (cumulative.iloc[-1] - 1) if len(cumulative) > 0 else 0
     }
 
@@ -370,22 +360,18 @@ def optimize_portfolio_weights(returns_df, method='max_sharpe', rf_rate=0.02):
     cov_matrix = returns_df.cov() * 252
     n = len(returns_df.columns)
     
-    # Regularize covariance matrix
     eigenvalues = np.linalg.eigvals(cov_matrix)
     if np.any(eigenvalues <= 0):
         cov_matrix = cov_matrix + np.eye(n) * 1e-8
     
     if method == 'equal':
         return np.array([1/n] * n)
-    
     elif method == 'min_vol':
-        def vol(w):
-            return np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
+        def vol(w): return np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
         constraints = {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
         bounds = tuple((0, 1) for _ in range(n))
         result = minimize(vol, [1/n]*n, method='SLSQP', bounds=bounds, constraints=constraints)
         return result.x if result.success else np.array([1/n]*n)
-    
     elif method == 'max_sharpe':
         def neg_sharpe(w):
             ret = np.dot(w, expected_returns)
@@ -395,12 +381,10 @@ def optimize_portfolio_weights(returns_df, method='max_sharpe', rf_rate=0.02):
         bounds = tuple((0, 1) for _ in range(n))
         result = minimize(neg_sharpe, [1/n]*n, method='SLSQP', bounds=bounds, constraints=constraints)
         return result.x if result.success else np.array([1/n]*n)
-    
     elif method == 'risk_parity':
         def risk_contrib_error(w):
             port_vol = np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
-            if port_vol == 0:
-                return 1e10
+            if port_vol == 0: return 1e10
             marginal = np.dot(cov_matrix, w)
             risk_contrib = w * marginal / port_vol
             target = port_vol / n
@@ -409,15 +393,11 @@ def optimize_portfolio_weights(returns_df, method='max_sharpe', rf_rate=0.02):
         bounds = tuple((0.001, 1) for _ in range(n))
         result = minimize(risk_contrib_error, [1/n]*n, method='SLSQP', bounds=bounds, constraints=constraints)
         return result.x if result.success else np.array([1/n]*n)
-    
     else:
         return np.array([1/n] * n)
 
 def run_walk_forward_analysis(returns_df, train_ratio=0.7, methods=None, rf_rate=0.02):
-    """
-    Perform Walk-Forward Analysis with train/test split.
-    Returns training weights, in-sample and out-of-sample performance.
-    """
+    """Perform Walk-Forward Analysis with train/test split."""
     if methods is None:
         methods = ['equal', 'min_vol', 'max_sharpe', 'risk_parity']
     
@@ -428,49 +408,19 @@ def run_walk_forward_analysis(returns_df, train_ratio=0.7, methods=None, rf_rate
     test_returns = returns_df.iloc[train_end:]
     
     results = {}
-    
     for method in methods:
-        # Optimize on training data
         weights = optimize_portfolio_weights(train_returns, method=method, rf_rate=rf_rate)
-        
-        # Calculate portfolio returns
         train_port_returns = train_returns.dot(weights)
         test_port_returns = test_returns.dot(weights)
-        
-        # Calculate metrics
         train_metrics = calculate_portfolio_metrics(train_port_returns, rf_rate)
         test_metrics = calculate_portfolio_metrics(test_port_returns, rf_rate)
-        
-        # Stability metrics
         stability_ratio = test_metrics['sharpe'] / train_metrics['sharpe'] if train_metrics['sharpe'] != 0 else 0
         
         results[method] = {
-            'weights': weights,
-            'train_metrics': train_metrics,
-            'test_metrics': test_metrics,
-            'train_returns': train_port_returns,
-            'test_returns': test_port_returns,
-            'stability_ratio': stability_ratio
+            'weights': weights, 'train_metrics': train_metrics, 'test_metrics': test_metrics,
+            'train_returns': train_port_returns, 'test_returns': test_port_returns, 'stability_ratio': stability_ratio
         }
-    
     return results, train_end
-
-def calculate_deflated_sharpe_ratio(sharpe_observed, n_trials, variance_sharpe, t_obs):
-    """
-    Calculate Deflated Sharpe Ratio (Bailey & López de Prado, 2014).
-    Adjusts for multiple testing and selection bias.
-    """
-    from scipy.stats import norm
-    
-    # Expected maximum Sharpe under null hypothesis
-    e_max_sharpe = variance_sharpe * ((1 - np.euler_gamma) * norm.ppf(1 - 1/n_trials) + 
-                                       np.euler_gamma * norm.ppf(1 - 1/(n_trials * np.e)))
-    
-    # Deflated Sharpe Ratio
-    dsr = norm.cdf((sharpe_observed - e_max_sharpe) * np.sqrt(t_obs) / 
-                   np.sqrt(1 + 0.5 * sharpe_observed**2))
-    
-    return dsr
 
 # Deep-dive Statistics Functions
 def compute_autocorrelation(x, max_lag):
@@ -828,7 +778,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
         
         st.markdown("---")
         
-        # Tabs - Added Backtest Validation
+        # Tabs
         if st.session_state.use_benchmark and benchmark_returns is not None:
             tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
                 "📊 Overview", "💼 Portfolios", "📈 Performance", "🔄 Rolling",
@@ -849,22 +799,22 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             col1, col2 = st.columns([2.5, 1])
             
             with col1:
-                st.markdown("##### 📈 Asset Performance (Base 100)")
+                st.markdown("#### 📈 Asset Performance (Base 100)")
                 normalized = (analyzer.data / analyzer.data.iloc[0]) * 100
                 fig = go.Figure()
                 for i, ticker in enumerate(normalized.columns):
                     fig.add_trace(go.Scatter(
                         x=normalized.index, y=normalized[ticker], name=get_display_name(ticker), mode='lines',
-                        line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2),
+                        line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2.5),
                         hovertemplate=f'<b>{get_display_name(ticker)}</b><br>Value: %{{y:.2f}}<extra></extra>'
                     ))
-                fig.update_layout(height=400, hovermode='x unified',
+                fig.update_layout(height=450, hovermode='x unified', xaxis_title="Date", yaxis_title="Value (Base 100)",
                                  legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
                 fig = apply_plotly_theme(fig)
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
-                st.markdown("##### 📊 Statistics")
+                st.markdown("#### 📊 Statistics")
                 final_values = (analyzer.data.iloc[-1] / analyzer.data.iloc[0] - 1) * 100
                 
                 st.markdown("**🔥 Top 3**")
@@ -873,20 +823,24 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 
                 st.markdown("**❄️ Bottom 3**")
                 for ticker, perf in final_values.nsmallest(3).items():
-                    color_fn = st.error if perf < 0 else st.warning
-                    color_fn(f"**{get_display_name(ticker)}**: {perf:+.1f}%")
+                    if perf < 0:
+                        st.error(f"**{get_display_name(ticker)}**: {perf:.1f}%")
+                    else:
+                        st.warning(f"**{get_display_name(ticker)}**: +{perf:.1f}%")
                 
+                st.markdown("---")
                 st.metric("📅 Days", f"{len(analyzer.data)}")
                 st.metric("📦 Assets", f"{len(symbols)}")
             
-            st.markdown("##### 🔥 Correlation Heatmap")
+            # Correlation
+            st.markdown("#### 🔥 Correlation Heatmap")
             corr_matrix = analyzer.returns.corr()
             corr_display = corr_matrix.copy()
             corr_display.index = [get_display_name(t) for t in corr_display.index]
             corr_display.columns = [get_display_name(t) for t in corr_display.columns]
             
             fig = px.imshow(corr_display, text_auto='.2f', aspect="auto", color_continuous_scale='RdBu_r', zmin=-1, zmax=1)
-            fig.update_layout(height=350)
+            fig.update_layout(height=400)
             fig = apply_plotly_theme(fig)
             st.plotly_chart(fig, use_container_width=True)
         
@@ -894,7 +848,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
         with tab2:
             st.markdown("### 💼 Portfolio Analysis")
             
-            st.markdown("##### 📊 Strategy Comparison (7 Strategies)")
+            st.markdown("#### 📊 Strategy Comparison")
             
             comparison_data = []
             for idx, (key, p) in enumerate(sorted(analyzer.portfolios.items(), key=lambda x: x[1]['sharpe_ratio'], reverse=True), 1):
@@ -904,12 +858,15 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     'Sortino': f"{p['sortino_ratio']:.3f}", 'Max DD': f"{p['max_drawdown']*100:.2f}%"
                 })
             
-            st.markdown(create_styled_table(pd.DataFrame(comparison_data), "Ranked by Sharpe Ratio"), unsafe_allow_html=True)
+            comparison_df = pd.DataFrame(comparison_data)
+            st.markdown(create_styled_table(comparison_df, "Ranked by Sharpe Ratio"), unsafe_allow_html=True)
+            
+            st.markdown("---")
             
             col1, col2 = st.columns(2)
             
             with col1:
-                st.markdown("##### 📊 Returns by Strategy")
+                st.markdown("#### 📊 Returns by Strategy")
                 port_data = sorted(analyzer.portfolios.values(), key=lambda x: x['annualized_return'], reverse=True)
                 fig = go.Figure(data=[go.Bar(
                     x=[p['name'] for p in port_data], y=[p['annualized_return'] * 100 for p in port_data],
@@ -917,55 +874,71 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     text=[f"{p['annualized_return']*100:.1f}%" for p in port_data],
                     textposition='outside', textfont=dict(color='#E2E8F0', size=9)
                 )])
-                fig.update_layout(height=350, xaxis_tickangle=-45)
+                fig.update_layout(height=380, xaxis_tickangle=-45, yaxis_title="Return (%)")
                 fig = apply_plotly_theme(fig)
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
-                st.markdown("##### ⚖️ Risk vs Return")
+                st.markdown("#### ⚖️ Risk vs Return")
                 fig = go.Figure()
                 for i, p in enumerate(analyzer.portfolios.values()):
                     fig.add_trace(go.Scatter(
                         x=[p['annualized_volatility'] * 100], y=[p['annualized_return'] * 100],
                         mode='markers+text', name=p['name'],
-                        marker=dict(size=14, color=CHART_COLORS[i % len(CHART_COLORS)]),
-                        text=[p['name'].split()[0]], textposition='top center', textfont=dict(color='#E2E8F0', size=8)
+                        marker=dict(size=16, color=CHART_COLORS[i % len(CHART_COLORS)]),
+                        text=[p['name'].split()[0]], textposition='top center', textfont=dict(color='#E2E8F0', size=8),
+                        hovertemplate=f"<b>{p['name']}</b><br>Return: %{{y:.2f}}%<br>Vol: %{{x:.2f}}%<extra></extra>"
                     ))
-                fig.update_layout(height=350, showlegend=False, xaxis_title="Volatility (%)", yaxis_title="Return (%)")
+                fig.update_layout(height=380, xaxis_title="Volatility (%)", yaxis_title="Return (%)", showlegend=False)
                 fig = apply_plotly_theme(fig)
                 st.plotly_chart(fig, use_container_width=True)
             
             st.markdown("---")
-            st.markdown("##### 🔍 Portfolio Details")
+            
+            st.markdown("#### 🔍 Portfolio Details")
             
             portfolio_keys = list(analyzer.portfolios.keys())
             selected_p = st.selectbox("Select strategy", portfolio_keys, format_func=lambda x: analyzer.portfolios[x]['name'], key="port_detail")
             portfolio = analyzer.portfolios[selected_p]
             
             mcols = st.columns(6)
-            for col, (label, value) in zip(mcols, [
+            metrics_list = [
                 ("Return", f"{portfolio['annualized_return']*100:.2f}%"),
-                ("Vol", f"{portfolio['annualized_volatility']*100:.2f}%"),
+                ("Volatility", f"{portfolio['annualized_volatility']*100:.2f}%"),
                 ("Sharpe", f"{portfolio['sharpe_ratio']:.3f}"),
                 ("Sortino", f"{portfolio['sortino_ratio']:.3f}"),
                 ("Max DD", f"{portfolio['max_drawdown']*100:.2f}%"),
-                ("CVaR 5%", f"{portfolio['cvar_5']*100:.2f}%")
-            ]):
+                ("Calmar", f"{portfolio['calmar_ratio']:.3f}")
+            ]
+            for col, (label, value) in zip(mcols, metrics_list):
                 col.metric(label, value)
             
-            weights_data = [{'Asset': get_display_name(t), 'Weight': f"{w*100:.2f}%"} for t, w in zip(symbols, portfolio['weights']) if w > 0.001]
-            weights_df = pd.DataFrame(weights_data)
+            st.markdown("##### ⚖️ Asset Allocation")
+            
+            weights_data = []
+            for ticker, weight in zip(symbols, portfolio['weights']):
+                if weight > 0.001:
+                    weights_data.append({'Asset': get_display_name(ticker), 'Ticker': ticker, 'Weight': weight * 100})
+            weights_df = pd.DataFrame(weights_data).sort_values('Weight', ascending=False)
             
             col1, col2 = st.columns([1, 1.2])
+            
             with col1:
-                st.markdown(create_styled_table(weights_df), unsafe_allow_html=True)
+                table_data = [{'Asset': r['Asset'], 'Weight': f"{r['Weight']:.2f}%"} for _, r in weights_df.iterrows()]
+                st.markdown(create_styled_table(pd.DataFrame(table_data)), unsafe_allow_html=True)
+            
             with col2:
-                wdf = pd.DataFrame([{'Asset': get_display_name(t), 'Weight': w*100} for t, w in zip(symbols, portfolio['weights']) if w > 0.001])
-                fig = go.Figure(data=[go.Pie(labels=wdf['Asset'], values=wdf['Weight'], hole=0.4, marker_colors=CHART_COLORS)])
-                fig.update_layout(height=280, showlegend=False)
+                fig = go.Figure(data=[go.Pie(
+                    labels=weights_df['Asset'], values=weights_df['Weight'], hole=0.4,
+                    marker_colors=CHART_COLORS[:len(weights_df)], textinfo='percent', textposition='outside',
+                    textfont=dict(color='#E2E8F0', size=10),
+                    hovertemplate='<b>%{label}</b><br>%{value:.2f}%<extra></extra>'
+                )])
+                fig.update_layout(height=320, showlegend=False,
+                    annotations=[dict(text=portfolio['name'].split()[0], x=0.5, y=0.5, font_size=11, font_color='#E2E8F0', showarrow=False)])
                 fig = apply_plotly_theme(fig)
                 st.plotly_chart(fig, use_container_width=True)
-# Part 5: Performance, Rolling, Deep-dive Tabs
+# Part 5: Performance and Rolling Tabs (FULL SIZE)
 
         # TAB 3: PERFORMANCE
         with tab3:
@@ -975,31 +948,39 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             sel_perf = st.multiselect("Select strategies", portfolio_keys, default=portfolio_keys[:4], format_func=lambda x: analyzer.portfolios[x]['name'], key="perf_sel")
             
             if sel_perf:
-                st.markdown("##### 📊 Cumulative Performance")
+                st.markdown("#### 📊 Cumulative Performance")
                 fig = go.Figure()
                 for i, p_name in enumerate(sel_perf):
                     p = analyzer.portfolios[p_name]
                     cum_val = (1 + p['returns']).cumprod() * 100
                     fig.add_trace(go.Scatter(x=cum_val.index, y=cum_val.values, name=p['name'], mode='lines',
-                        line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2)))
-                fig.update_layout(height=380, hovermode='x unified',
+                        line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2.5),
+                        hovertemplate=f'<b>{p["name"]}</b><br>Value: %{{y:.2f}}<extra></extra>'))
+                fig.update_layout(height=420, hovermode='x unified', xaxis_title="Date", yaxis_title="Value (Base 100)",
                                  legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
                 fig = apply_plotly_theme(fig)
                 st.plotly_chart(fig, use_container_width=True)
                 
-                st.markdown("##### 📉 Drawdown")
+                st.markdown("#### 📉 Drawdown Analysis")
                 fig = go.Figure()
                 for i, p_name in enumerate(sel_perf):
                     p = analyzer.portfolios[p_name]
                     cum_val = (1 + p['returns']).cumprod()
-                    dd = (cum_val - cum_val.expanding().max()) / cum_val.expanding().max() * 100
-                    fig.add_trace(go.Scatter(x=dd.index, y=dd.values, name=p['name'], fill='tozeroy',
-                        line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=1)))
-                fig.update_layout(height=280, hovermode='x unified')
+                    roll_max = cum_val.expanding().max()
+                    dd = (cum_val - roll_max) / roll_max * 100
+                    color = CHART_COLORS[i % len(CHART_COLORS)]
+                    r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+                    fig.add_trace(go.Scatter(x=dd.index, y=dd.values, name=p['name'], mode='lines',
+                        line=dict(color=color, width=2), fill='tozeroy', fillcolor=f'rgba({r},{g},{b},0.2)',
+                        hovertemplate=f'<b>{p["name"]}</b><br>DD: %{{y:.2f}}%<extra></extra>'))
+                fig.update_layout(height=320, hovermode='x unified', xaxis_title="Date", yaxis_title="Drawdown (%)",
+                                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
                 fig = apply_plotly_theme(fig)
                 st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("⚠️ Select at least one strategy")
         
-        # TAB 4: ROLLING
+        # TAB 4: ROLLING (FULL SIZE)
         with tab4:
             st.markdown("### 🔄 Rolling Analysis")
             st.info(f"📊 Window: **{window_years} years** ({window_years * 252} days)")
@@ -1014,97 +995,290 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     p = analyzer.portfolios[p_name]
                     rets = p['returns']
                     if len(rets) >= window:
-                        roll_ret = rets.rolling(window=window).apply(lambda x: (1+x).prod()**(252/len(x))-1)
+                        roll_ret = rets.rolling(window=window).apply(lambda x: (1+x).prod()**(252/len(x))-1 if len(x)==window else np.nan)
                         roll_vol = rets.rolling(window=window).std() * np.sqrt(252)
                         roll_sharpe = (roll_ret - rf_rate) / roll_vol
                         rolling_data[p['name']] = pd.DataFrame({'Return': roll_ret, 'Volatility': roll_vol, 'Sharpe': roll_sharpe}).dropna()
                 
                 if rolling_data:
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.markdown("##### 📈 Rolling Returns")
-                        fig = go.Figure()
-                        for i, (name, data) in enumerate(rolling_data.items()):
-                            fig.add_trace(go.Scatter(x=data.index, y=data['Return']*100, name=name, line=dict(color=CHART_COLORS[i % len(CHART_COLORS)])))
-                        fig.update_layout(height=300, hovermode='x unified')
-                        fig = apply_plotly_theme(fig)
-                        st.plotly_chart(fig, use_container_width=True)
+                    st.markdown("#### 📈 Rolling Returns")
+                    fig = go.Figure()
+                    for i, (name, data) in enumerate(rolling_data.items()):
+                        fig.add_trace(go.Scatter(x=data.index, y=data['Return']*100, name=name,
+                            line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2.5)))
+                    fig.update_layout(height=350, hovermode='x unified', yaxis_title="Return (%)",
+                                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
+                    fig = apply_plotly_theme(fig)
+                    st.plotly_chart(fig, use_container_width=True)
                     
-                    with col2:
-                        st.markdown("##### ⭐ Rolling Sharpe")
-                        fig = go.Figure()
-                        for i, (name, data) in enumerate(rolling_data.items()):
-                            fig.add_trace(go.Scatter(x=data.index, y=data['Sharpe'], name=name, line=dict(color=CHART_COLORS[i % len(CHART_COLORS)])))
-                        fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
-                        fig.update_layout(height=300, hovermode='x unified')
-                        fig = apply_plotly_theme(fig)
-                        st.plotly_chart(fig, use_container_width=True)
-        
-        # TAB 5: DEEP-DIVE
+                    st.markdown("#### ⭐ Rolling Sharpe Ratio")
+                    fig = go.Figure()
+                    for i, (name, data) in enumerate(rolling_data.items()):
+                        fig.add_trace(go.Scatter(x=data.index, y=data['Sharpe'], name=name,
+                            line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2.5)))
+                    fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+                    fig.update_layout(height=350, hovermode='x unified', yaxis_title="Sharpe Ratio",
+                                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
+                    fig = apply_plotly_theme(fig)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("⚠️ Not enough data for rolling window")
+            else:
+                st.warning("⚠️ Select at least one strategy")
+# Part 6: FULL Deep-dive Statistics Tab (restored from v6)
+
+        # TAB 5: DEEP-DIVE STATISTICS (FULL VERSION)
         with tab5:
             st.markdown("### 🔬 Deep-dive Statistics")
+            st.markdown("Statistical analysis of individual asset risk drivers using log-returns and invariance tests.")
             
-            selected_asset = st.selectbox("Select Asset", symbols, format_func=lambda x: get_display_name(x), key="deepdive_asset")
+            # Asset selector
+            asset_options = [(t, get_display_name(t)) for t in symbols]
+            selected_asset = st.selectbox(
+                "Select Asset for Analysis",
+                options=[t[0] for t in asset_options],
+                format_func=lambda x: get_display_name(x),
+                key="deepdive_asset"
+            )
             
             if selected_asset:
+                # Get price data for selected asset
                 prices = analyzer.data[selected_asset]
+                
+                # Calculate risk driver (log-values)
                 x_stock = np.log(prices.values)
+                dates_idx = prices.index
+                
+                # Calculate log-returns (compounded returns)
                 delta_x = np.diff(x_stock)
                 delta_x_abs = np.abs(delta_x)
                 
+                st.markdown("---")
+                
+                # Section 1: Risk Driver Time Series
+                st.markdown(f"#### 📈 Risk Driver: Log-values of {get_display_name(selected_asset)}")
+                
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    st.markdown("##### 📈 Log-values")
                     fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=prices.index, y=x_stock, mode='lines', line=dict(color=CHART_COLORS[0], width=2)))
-                    fig.update_layout(height=250)
+                    fig.add_trace(go.Scatter(x=dates_idx, y=x_stock, mode='lines',
+                        line=dict(color=CHART_COLORS[0], width=2),
+                        hovertemplate='Date: %{x}<br>Log-value: %{y:.4f}<extra></extra>'))
+                    fig.update_layout(height=300, xaxis_title="Date", yaxis_title="Log-values")
                     fig = apply_plotly_theme(fig)
                     st.plotly_chart(fig, use_container_width=True)
                 
                 with col2:
-                    st.markdown("##### 📊 Summary")
+                    # Basic statistics
+                    st.markdown("##### 📊 Summary Statistics")
                     stats_data = {
-                        'Metric': ['Mean', 'Std Dev', 'Skewness', 'Kurtosis'],
-                        'Value': [f"{np.mean(delta_x):.6f}", f"{np.std(delta_x):.6f}", f"{stats.skew(delta_x):.4f}", f"{stats.kurtosis(delta_x):.4f}"]
+                        'Metric': ['Mean Log-Return', 'Std Dev', 'Skewness', 'Kurtosis', 'Min', 'Max'],
+                        'Value': [
+                            f"{np.mean(delta_x):.6f}",
+                            f"{np.std(delta_x):.6f}",
+                            f"{stats.skew(delta_x):.4f}",
+                            f"{stats.kurtosis(delta_x):.4f}",
+                            f"{np.min(delta_x):.4f}",
+                            f"{np.max(delta_x):.4f}"
+                        ]
                     }
                     st.markdown(create_styled_table(pd.DataFrame(stats_data)), unsafe_allow_html=True)
                 
-                st.markdown("##### 🧪 Invariance Tests")
-                l_bar = st.slider("Max lag", 5, 50, 25, key="lag_slider")
+                st.markdown("---")
+                
+                # Section 2: Log-Returns (Compounded Returns)
+                st.markdown("#### 📉 Compounded Returns (Log-Returns)")
+                
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=dates_idx[1:], y=delta_x, mode='markers',
+                    marker=dict(size=3, color=CHART_COLORS[1], opacity=0.7),
+                    hovertemplate='Date: %{x}<br>Return: %{y:.4f}<extra></extra>'))
+                fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+                fig.update_layout(height=300, xaxis_title="Date", yaxis_title="Log-Return")
+                fig = apply_plotly_theme(fig)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                st.markdown("---")
+                
+                # Section 3: Invariance Tests
+                st.markdown("#### 🧪 Invariance Tests")
+                st.markdown("Testing if log-returns are IID (independent and identically distributed).")
+                
+                l_bar = st.slider("Maximum lag for autocorrelation", 5, 50, 25, key="lag_slider")
+                conf_lev = 0.95
                 
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    st.markdown("##### ACF Returns")
-                    acf, conf_int, test_passed = invariance_test_ellipsoid(delta_x, l_bar)
+                    # Ellipsoid test on returns
+                    st.markdown("##### Autocorrelation of Returns")
+                    acf, conf_int, test_passed = invariance_test_ellipsoid(delta_x, l_bar, conf_lev)
+                    
                     fig = go.Figure()
-                    fig.add_trace(go.Bar(x=list(range(1, l_bar+1)), y=acf, marker_color=CHART_COLORS[2]))
-                    fig.add_hline(y=conf_int, line_dash="dash", line_color="#FF6B6B")
-                    fig.add_hline(y=-conf_int, line_dash="dash", line_color="#FF6B6B")
-                    fig.update_layout(height=250, yaxis_range=[-0.2, 0.2])
+                    fig.add_trace(go.Bar(x=list(range(1, l_bar+1)), y=acf,
+                        marker_color=CHART_COLORS[2], name='ACF'))
+                    fig.add_hline(y=conf_int, line_dash="dash", line_color="#FF6B6B", 
+                                 annotation_text=f"+{conf_lev*100:.0f}% CI")
+                    fig.add_hline(y=-conf_int, line_dash="dash", line_color="#FF6B6B",
+                                 annotation_text=f"-{conf_lev*100:.0f}% CI")
+                    fig.add_hline(y=0, line_color="rgba(255,255,255,0.5)")
+                    fig.update_layout(height=300, xaxis_title="Lag", yaxis_title="Autocorrelation",
+                                     yaxis_range=[-0.3, 0.3])
                     fig = apply_plotly_theme(fig)
                     st.plotly_chart(fig, use_container_width=True)
+                    
                     if test_passed:
-                        st.success("✅ IID")
+                        st.success("✅ Returns appear IID (all ACF within confidence bands)")
                     else:
-                        st.warning("⚠️ Autocorrelation detected")
+                        st.warning("⚠️ Some autocorrelations exceed confidence bands")
                 
                 with col2:
-                    st.markdown("##### ACF |Returns| (Vol Clustering)")
-                    acf_abs, conf_abs, test_abs = invariance_test_ellipsoid(delta_x_abs, l_bar)
+                    # Ellipsoid test on absolute returns (volatility clustering)
+                    st.markdown("##### Autocorrelation of |Returns| (Volatility Clustering)")
+                    acf_abs, conf_int_abs, test_passed_abs = invariance_test_ellipsoid(delta_x_abs, l_bar, conf_lev)
+                    
                     fig = go.Figure()
-                    fig.add_trace(go.Bar(x=list(range(1, l_bar+1)), y=acf_abs, marker_color=CHART_COLORS[3]))
-                    fig.add_hline(y=conf_abs, line_dash="dash", line_color="#FF6B6B")
-                    fig.add_hline(y=-conf_abs, line_dash="dash", line_color="#FF6B6B")
-                    fig.update_layout(height=250, yaxis_range=[-0.1, 0.4])
+                    fig.add_trace(go.Bar(x=list(range(1, l_bar+1)), y=acf_abs,
+                        marker_color=CHART_COLORS[3], name='ACF |r|'))
+                    fig.add_hline(y=conf_int_abs, line_dash="dash", line_color="#FF6B6B")
+                    fig.add_hline(y=-conf_int_abs, line_dash="dash", line_color="#FF6B6B")
+                    fig.add_hline(y=0, line_color="rgba(255,255,255,0.5)")
+                    fig.update_layout(height=300, xaxis_title="Lag", yaxis_title="Autocorrelation",
+                                     yaxis_range=[-0.1, 0.4])
                     fig = apply_plotly_theme(fig)
                     st.plotly_chart(fig, use_container_width=True)
-                    if test_abs:
-                        st.success("✅ No clustering")
+                    
+                    if test_passed_abs:
+                        st.success("✅ No volatility clustering detected")
                     else:
-                        st.info("ℹ️ Volatility clustering")
-# Part 6: BACKTEST VALIDATION TAB (NEW!)
+                        st.info("ℹ️ Volatility clustering detected (common in financial data)")
+                
+                st.markdown("---")
+                
+                # Section 4: Distribution Analysis
+                st.markdown("#### 📊 Distribution Analysis")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Histogram with normal overlay
+                    st.markdown("##### Return Distribution vs Normal")
+                    
+                    fig = go.Figure()
+                    fig.add_trace(go.Histogram(x=delta_x, nbinsx=50, name='Returns',
+                        marker_color=CHART_COLORS[4], opacity=0.7, histnorm='probability density'))
+                    
+                    # Normal overlay
+                    x_range = np.linspace(delta_x.min(), delta_x.max(), 100)
+                    normal_pdf = stats.norm.pdf(x_range, np.mean(delta_x), np.std(delta_x))
+                    fig.add_trace(go.Scatter(x=x_range, y=normal_pdf, mode='lines',
+                        name='Normal', line=dict(color='#FFFFFF', width=2)))
+                    
+                    fig.update_layout(height=300, xaxis_title="Log-Return", yaxis_title="Density",
+                                     legend=dict(orientation="h", yanchor="bottom", y=1.02))
+                    fig = apply_plotly_theme(fig)
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    # Normality Tests
+                    st.markdown("##### Normality Tests")
+                    
+                    ks_stat, ks_pval = ks_test(delta_x)
+                    
+                    # Jarque-Bera test
+                    jb_stat, jb_pval = stats.jarque_bera(delta_x)
+                    
+                    # Shapiro-Wilk (on subsample if too large)
+                    if len(delta_x) > 5000:
+                        sw_sample = np.random.choice(delta_x, 5000, replace=False)
+                    else:
+                        sw_sample = delta_x
+                    sw_stat, sw_pval = stats.shapiro(sw_sample)
+                    
+                    test_results = {
+                        'Test': ['Kolmogorov-Smirnov', 'Jarque-Bera', 'Shapiro-Wilk'],
+                        'Statistic': [f"{ks_stat:.4f}", f"{jb_stat:.2f}", f"{sw_stat:.4f}"],
+                        'p-value': [f"{ks_pval:.4f}", f"{jb_pval:.4f}", f"{sw_pval:.4f}"],
+                        'Normal?': [
+                            "✅ Yes" if ks_pval > 0.05 else "❌ No",
+                            "✅ Yes" if jb_pval > 0.05 else "❌ No",
+                            "✅ Yes" if sw_pval > 0.05 else "❌ No"
+                        ]
+                    }
+                    st.markdown(create_styled_table(pd.DataFrame(test_results)), unsafe_allow_html=True)
+                    
+                    st.markdown("*p-value > 0.05 suggests normality cannot be rejected*")
+                
+                st.markdown("---")
+                
+                # Section 5: GARCH Analysis (if available)
+                if ARCH_AVAILABLE:
+                    st.markdown("#### ⚡ GARCH(1,1) Analysis")
+                    st.markdown("Modeling conditional volatility with GARCH(1,1)")
+                    
+                    with st.spinner("Fitting GARCH model..."):
+                        params, std_resid, cond_vol = fit_garch(delta_x)
+                    
+                    if params is not None:
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("##### Model Parameters")
+                            param_data = {
+                                'Parameter': ['μ (mean)', 'ω (constant)', 'α (ARCH)', 'β (GARCH)', 'Persistence (α+β)'],
+                                'Value': [
+                                    f"{params['mu']:.6f}",
+                                    f"{params['omega']:.8f}",
+                                    f"{params['alpha[1]']:.4f}",
+                                    f"{params['beta[1]']:.4f}",
+                                    f"{params['alpha[1]'] + params['beta[1]']:.4f}"
+                                ]
+                            }
+                            st.markdown(create_styled_table(pd.DataFrame(param_data)), unsafe_allow_html=True)
+                        
+                        with col2:
+                            st.markdown("##### Conditional Volatility")
+                            fig = go.Figure()
+                            fig.add_trace(go.Scatter(x=dates_idx[1:], y=cond_vol*np.sqrt(252)*100,
+                                mode='lines', line=dict(color=CHART_COLORS[5], width=1.5),
+                                hovertemplate='Date: %{x}<br>Ann. Vol: %{y:.2f}%<extra></extra>'))
+                            fig.update_layout(height=250, xaxis_title="Date", yaxis_title="Annualized Vol (%)")
+                            fig = apply_plotly_theme(fig)
+                            st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Standardized residuals
+                        st.markdown("##### Standardized Residuals (Invariants)")
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            fig = go.Figure()
+                            fig.add_trace(go.Scatter(x=dates_idx[1:], y=std_resid, mode='markers',
+                                marker=dict(size=2, color=CHART_COLORS[6], opacity=0.6)))
+                            fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+                            fig.update_layout(height=250, xaxis_title="Date", yaxis_title="Std. Residual")
+                            fig = apply_plotly_theme(fig)
+                            st.plotly_chart(fig, use_container_width=True)
+                        
+                        with col2:
+                            # ACF of squared standardized residuals
+                            acf_resid2, conf_resid, _ = invariance_test_ellipsoid(std_resid**2, 20, 0.95)
+                            
+                            fig = go.Figure()
+                            fig.add_trace(go.Bar(x=list(range(1, 21)), y=acf_resid2,
+                                marker_color=CHART_COLORS[7], name='ACF ε²'))
+                            fig.add_hline(y=conf_resid, line_dash="dash", line_color="#FF6B6B")
+                            fig.add_hline(y=-conf_resid, line_dash="dash", line_color="#FF6B6B")
+                            fig.update_layout(height=250, xaxis_title="Lag", yaxis_title="ACF of ε²",
+                                             yaxis_range=[-0.15, 0.15])
+                            fig = apply_plotly_theme(fig)
+                            st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning("⚠️ Could not fit GARCH model to this data")
+                else:
+                    st.info("ℹ️ Install `arch` package for GARCH analysis: `pip install arch`")
+# Part 7: Backtest Validation Tab
 
         # TAB 6: BACKTEST VALIDATION
         with tab6:
@@ -1122,31 +1296,14 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             # Configuration
             col1, col2, col3 = st.columns(3)
             with col1:
-                split_scheme = st.selectbox(
-                    "Split Scheme",
-                    ["70/30", "80/20", "60/40"],
-                    key="split_scheme"
-                )
+                split_scheme = st.selectbox("Split Scheme", ["70/30", "80/20", "60/40"], key="split_scheme")
             with col2:
-                validation_type = st.selectbox(
-                    "Validation Type",
-                    ["Single Split", "Rolling (3 folds)", "Rolling (5 folds)"],
-                    key="val_type"
-                )
+                validation_type = st.selectbox("Validation Type", ["Single Split", "Rolling (3 folds)", "Rolling (5 folds)"], key="val_type")
             with col3:
-                methods_to_test = st.multiselect(
-                    "Strategies to Test",
-                    ["equal", "min_vol", "max_sharpe", "risk_parity"],
-                    default=["equal", "min_vol", "max_sharpe", "risk_parity"],
-                    key="bt_methods"
-                )
+                methods_to_test = st.multiselect("Strategies", ["equal", "min_vol", "max_sharpe", "risk_parity"],
+                    default=["equal", "min_vol", "max_sharpe", "risk_parity"], key="bt_methods")
             
-            method_names = {
-                'equal': 'Equally Weighted',
-                'min_vol': 'Minimum Volatility',
-                'max_sharpe': 'Maximum Sharpe',
-                'risk_parity': 'Risk Parity'
-            }
+            method_names = {'equal': 'Equally Weighted', 'min_vol': 'Minimum Volatility', 'max_sharpe': 'Maximum Sharpe', 'risk_parity': 'Risk Parity'}
             
             if st.button("🚀 Run Backtest", use_container_width=True, key="run_backtest"):
                 if not methods_to_test:
@@ -1155,98 +1312,65 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     train_ratio = float(split_scheme.split('/')[0]) / 100
                     
                     with st.spinner("Running Walk-Forward Analysis..."):
-                        results, train_end = run_walk_forward_analysis(
-                            analyzer.returns, 
-                            train_ratio=train_ratio, 
-                            methods=methods_to_test,
-                            rf_rate=rf_rate
-                        )
+                        results, train_end = run_walk_forward_analysis(analyzer.returns, train_ratio=train_ratio, methods=methods_to_test, rf_rate=rf_rate)
                     
-                    # Dates
                     all_dates = analyzer.returns.index
                     train_dates = all_dates[:train_end]
                     test_dates = all_dates[train_end:]
                     
-                    st.success(f"✅ Analysis complete! Train: {len(train_dates)} days | Test: {len(test_dates)} days")
-                    
+                    st.success(f"✅ Complete! Train: {len(train_dates)} days | Test: {len(test_dates)} days")
                     st.markdown("---")
                     
-                    # 1. Performance Chart with Train/Test zones
-                    st.markdown("##### 📊 Cumulative Performance (Train vs Test)")
+                    # 1. Performance Chart
+                    st.markdown("#### 📊 Cumulative Performance (Train vs Test)")
                     
                     fig = go.Figure()
-                    
-                    # Add shaded regions
-                    fig.add_vrect(x0=train_dates[0], x1=train_dates[-1], 
-                                 fillcolor="rgba(99, 102, 241, 0.1)", layer="below", line_width=0,
+                    fig.add_vrect(x0=train_dates[0], x1=train_dates[-1], fillcolor="rgba(99, 102, 241, 0.1)", layer="below", line_width=0,
                                  annotation_text="TRAIN", annotation_position="top left")
-                    fig.add_vrect(x0=test_dates[0], x1=test_dates[-1],
-                                 fillcolor="rgba(16, 185, 129, 0.1)", layer="below", line_width=0,
+                    fig.add_vrect(x0=test_dates[0], x1=test_dates[-1], fillcolor="rgba(16, 185, 129, 0.1)", layer="below", line_width=0,
                                  annotation_text="TEST", annotation_position="top left")
                     
                     for i, (method, res) in enumerate(results.items()):
-                        # Combine train and test returns
                         all_returns = pd.concat([res['train_returns'], res['test_returns']])
                         cum_val = (1 + all_returns).cumprod() * 100
-                        
-                        fig.add_trace(go.Scatter(
-                            x=cum_val.index, y=cum_val.values,
-                            name=method_names.get(method, method),
-                            mode='lines',
-                            line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2)
-                        ))
+                        fig.add_trace(go.Scatter(x=cum_val.index, y=cum_val.values, name=method_names.get(method, method),
+                            mode='lines', line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2)))
                     
-                    # Add vertical line at split point
                     fig.add_vline(x=train_dates[-1], line_dash="dash", line_color="white", line_width=2)
-                    
-                    fig.update_layout(height=400, hovermode='x unified',
-                                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
+                    fig.update_layout(height=400, hovermode='x unified', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
                     fig = apply_plotly_theme(fig)
                     st.plotly_chart(fig, use_container_width=True)
                     
                     st.markdown("---")
                     
-                    # 2. Train vs Test Metrics Comparison
-                    st.markdown("##### 📋 In-Sample vs Out-of-Sample Metrics")
+                    # 2. Metrics Comparison
+                    st.markdown("#### 📋 In-Sample vs Out-of-Sample Metrics")
                     
                     comparison_rows = []
                     for method, res in results.items():
-                        train_m = res['train_metrics']
-                        test_m = res['test_metrics']
-                        
+                        train_m, test_m = res['train_metrics'], res['test_metrics']
                         comparison_rows.append({
                             'Strategy': method_names.get(method, method),
-                            'Train Return': f"{train_m['return']*100:.2f}%",
-                            'Test Return': f"{test_m['return']*100:.2f}%",
+                            'Train Return': f"{train_m['return']*100:.2f}%", 'Test Return': f"{test_m['return']*100:.2f}%",
                             'Δ Return': f"{(test_m['return'] - train_m['return'])*100:+.2f}%",
-                            'Train Sharpe': f"{train_m['sharpe']:.3f}",
-                            'Test Sharpe': f"{test_m['sharpe']:.3f}",
+                            'Train Sharpe': f"{train_m['sharpe']:.3f}", 'Test Sharpe': f"{test_m['sharpe']:.3f}",
                             'Stability': f"{res['stability_ratio']:.2f}"
                         })
-                    
                     st.markdown(create_styled_table(pd.DataFrame(comparison_rows)), unsafe_allow_html=True)
-                    
-                    st.markdown("""
-                    *Stability Ratio = Test Sharpe / Train Sharpe (ideal ≈ 1.0, <0.5 suggests overfitting)*
-                    """)
+                    st.markdown("*Stability Ratio = Test Sharpe / Train Sharpe (ideal ≈ 1.0, <0.5 suggests overfitting)*")
                     
                     st.markdown("---")
                     
-                    # 3. Return Distribution: Train vs Test
-                    st.markdown("##### 📊 Return Distributions (Train vs Test)")
-                    
+                    # 3. Distribution
+                    st.markdown("#### 📊 Return Distributions")
                     col1, col2 = st.columns(2)
                     
                     with col1:
                         st.markdown("**Training Period**")
                         fig = go.Figure()
                         for i, (method, res) in enumerate(results.items()):
-                            fig.add_trace(go.Histogram(
-                                x=res['train_returns'].values * 100,
-                                name=method_names.get(method, method),
-                                opacity=0.7,
-                                marker_color=CHART_COLORS[i % len(CHART_COLORS)]
-                            ))
+                            fig.add_trace(go.Histogram(x=res['train_returns'].values * 100, name=method_names.get(method, method),
+                                opacity=0.7, marker_color=CHART_COLORS[i % len(CHART_COLORS)]))
                         fig.update_layout(height=280, barmode='overlay', xaxis_title="Daily Return (%)")
                         fig = apply_plotly_theme(fig)
                         st.plotly_chart(fig, use_container_width=True)
@@ -1255,117 +1379,68 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         st.markdown("**Testing Period**")
                         fig = go.Figure()
                         for i, (method, res) in enumerate(results.items()):
-                            fig.add_trace(go.Histogram(
-                                x=res['test_returns'].values * 100,
-                                name=method_names.get(method, method),
-                                opacity=0.7,
-                                marker_color=CHART_COLORS[i % len(CHART_COLORS)]
-                            ))
+                            fig.add_trace(go.Histogram(x=res['test_returns'].values * 100, name=method_names.get(method, method),
+                                opacity=0.7, marker_color=CHART_COLORS[i % len(CHART_COLORS)]))
                         fig.update_layout(height=280, barmode='overlay', xaxis_title="Daily Return (%)")
                         fig = apply_plotly_theme(fig)
                         st.plotly_chart(fig, use_container_width=True)
                     
                     st.markdown("---")
                     
-                    # 4. Risk Metrics Comparison
-                    st.markdown("##### ⚠️ Risk Metrics (Train vs Test)")
-                    
+                    # 4. Risk Metrics
+                    st.markdown("#### ⚠️ Risk Metrics")
                     risk_rows = []
                     for method, res in results.items():
-                        train_m = res['train_metrics']
-                        test_m = res['test_metrics']
-                        
+                        train_m, test_m = res['train_metrics'], res['test_metrics']
                         risk_rows.append({
                             'Strategy': method_names.get(method, method),
-                            'Train Vol': f"{train_m['volatility']*100:.2f}%",
-                            'Test Vol': f"{test_m['volatility']*100:.2f}%",
-                            'Train MaxDD': f"{train_m['max_drawdown']*100:.2f}%",
-                            'Test MaxDD': f"{test_m['max_drawdown']*100:.2f}%",
-                            'Train VaR': f"{train_m['var_5']*100:.2f}%",
-                            'Test VaR': f"{test_m['var_5']*100:.2f}%"
+                            'Train Vol': f"{train_m['volatility']*100:.2f}%", 'Test Vol': f"{test_m['volatility']*100:.2f}%",
+                            'Train MaxDD': f"{train_m['max_drawdown']*100:.2f}%", 'Test MaxDD': f"{test_m['max_drawdown']*100:.2f}%",
+                            'Train VaR': f"{train_m['var_5']*100:.2f}%", 'Test VaR': f"{test_m['var_5']*100:.2f}%"
                         })
-                    
                     st.markdown(create_styled_table(pd.DataFrame(risk_rows)), unsafe_allow_html=True)
                     
                     st.markdown("---")
                     
-                    # 5. Strategy Ranking
-                    st.markdown("##### 🏆 Out-of-Sample Ranking")
-                    
-                    ranking_data = []
-                    for method, res in results.items():
-                        test_m = res['test_metrics']
-                        ranking_data.append({
-                            'method': method,
-                            'name': method_names.get(method, method),
-                            'test_sharpe': test_m['sharpe'],
-                            'test_return': test_m['return'],
-                            'stability': res['stability_ratio']
-                        })
-                    
+                    # 5. Ranking
+                    st.markdown("#### 🏆 Out-of-Sample Ranking")
+                    ranking_data = [{'method': m, 'name': method_names.get(m, m), 'test_sharpe': r['test_metrics']['sharpe'],
+                                    'test_return': r['test_metrics']['return'], 'stability': r['stability_ratio']} for m, r in results.items()]
                     ranking_df = pd.DataFrame(ranking_data).sort_values('test_sharpe', ascending=False)
                     
-                    st.markdown("**Best Out-of-Sample Performance:**")
                     for i, (_, row) in enumerate(ranking_df.iterrows()):
                         medal = ["🥇", "🥈", "🥉", "4️⃣"][i] if i < 4 else f"{i+1}."
-                        stability_emoji = "✅" if row['stability'] > 0.7 else "⚠️" if row['stability'] > 0.3 else "❌"
-                        st.markdown(f"{medal} **{row['name']}** - Sharpe: {row['test_sharpe']:.3f} | Return: {row['test_return']*100:.2f}% | Stability: {stability_emoji} {row['stability']:.2f}")
+                        stab_emoji = "✅" if row['stability'] > 0.7 else "⚠️" if row['stability'] > 0.3 else "❌"
+                        st.markdown(f"{medal} **{row['name']}** - Sharpe: {row['test_sharpe']:.3f} | Return: {row['test_return']*100:.2f}% | Stability: {stab_emoji} {row['stability']:.2f}")
                     
                     st.markdown("---")
                     
                     # 6. Overfitting Analysis
-                    st.markdown("##### 🔍 Overfitting Analysis")
-                    
+                    st.markdown("#### 🔍 Overfitting Analysis")
                     col1, col2 = st.columns(2)
                     
                     with col1:
                         st.markdown("**Sharpe Ratio Decay**")
                         fig = go.Figure()
-                        
                         methods_list = list(results.keys())
                         train_sharpes = [results[m]['train_metrics']['sharpe'] for m in methods_list]
                         test_sharpes = [results[m]['test_metrics']['sharpe'] for m in methods_list]
-                        
-                        x_pos = np.arange(len(methods_list))
-                        
                         fig.add_trace(go.Bar(x=[method_names.get(m, m) for m in methods_list], y=train_sharpes, name='Train', marker_color='#6366F1'))
                         fig.add_trace(go.Bar(x=[method_names.get(m, m) for m in methods_list], y=test_sharpes, name='Test', marker_color='#10B981'))
-                        
                         fig.update_layout(height=300, barmode='group', yaxis_title="Sharpe Ratio")
                         fig = apply_plotly_theme(fig)
                         st.plotly_chart(fig, use_container_width=True)
                     
                     with col2:
                         st.markdown("**Stability Analysis**")
-                        
                         stab_data = []
                         for method, res in results.items():
                             stability = res['stability_ratio']
-                            if stability > 0.8:
-                                status = "🟢 Excellent"
-                            elif stability > 0.5:
-                                status = "🟡 Good"
-                            elif stability > 0.3:
-                                status = "🟠 Moderate"
-                            else:
-                                status = "🔴 Poor (Overfitting)"
-                            
-                            stab_data.append({
-                                'Strategy': method_names.get(method, method),
-                                'Stability': f"{stability:.2f}",
-                                'Status': status
-                            })
-                        
+                            status = "🟢 Excellent" if stability > 0.8 else "🟡 Good" if stability > 0.5 else "🟠 Moderate" if stability > 0.3 else "🔴 Poor"
+                            stab_data.append({'Strategy': method_names.get(method, method), 'Stability': f"{stability:.2f}", 'Status': status})
                         st.markdown(create_styled_table(pd.DataFrame(stab_data)), unsafe_allow_html=True)
-                        
-                        st.info("""
-                        **Interpreting Stability:**
-                        - 🟢 >0.8: Strategy generalizes well
-                        - 🟡 0.5-0.8: Acceptable, some decay
-                        - 🟠 0.3-0.5: Caution, potential overfitting
-                        - 🔴 <0.3: Likely overfitting
-                        """)
-# Part 7: Frontier, Benchmark, Export, Footer
+                        st.info("🟢 >0.8: Excellent | 🟡 0.5-0.8: Good | 🟠 0.3-0.5: Caution | 🔴 <0.3: Overfitting")
+# Part 8: Frontier, Benchmark, Export, Footer
 
         # TAB 7: FRONTIER
         with tab7:
@@ -1377,22 +1452,28 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 if not frontier_df.empty:
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(x=frontier_df['Volatility']*100, y=frontier_df['Return']*100, mode='lines', name='Frontier',
-                        line=dict(color='#FFE66D', width=4)))
+                        line=dict(color='#FFE66D', width=4), hovertemplate='Vol: %{x:.2f}%<br>Return: %{y:.2f}%<extra></extra>'))
                     
                     for i, (p_name, p) in enumerate(analyzer.portfolios.items()):
                         fig.add_trace(go.Scatter(x=[p['annualized_volatility']*100], y=[p['annualized_return']*100], mode='markers+text', name=p['name'],
-                            marker=dict(size=12, color=CHART_COLORS[i % len(CHART_COLORS)], symbol='diamond'),
-                            text=[p['name'].split()[0]], textposition='top center', textfont=dict(color='#E2E8F0', size=8)))
+                            marker=dict(size=14, color=CHART_COLORS[i % len(CHART_COLORS)], symbol='diamond', line=dict(width=2, color='white')),
+                            text=[p['name'].split()[0]], textposition='top center', textfont=dict(color='#E2E8F0', size=9),
+                            hovertemplate=f"<b>{p['name']}</b><br>Return: %{{y:.2f}}%<br>Vol: %{{x:.2f}}%<extra></extra>"))
                     
-                    fig.update_layout(height=450, xaxis_title="Volatility (%)", yaxis_title="Return (%)",
+                    max_sharpe_p = max(analyzer.portfolios.values(), key=lambda x: x['sharpe_ratio'])
+                    cml_x = [0, max_sharpe_p['annualized_volatility']*100*2.5]
+                    cml_y = [rf_rate*100, rf_rate*100 + max_sharpe_p['sharpe_ratio']*cml_x[1]]
+                    fig.add_trace(go.Scatter(x=cml_x, y=cml_y, mode='lines', name='CML', line=dict(color='#4ECDC4', width=2, dash='dash'), hoverinfo='skip'))
+                    
+                    fig.update_layout(height=500, xaxis_title="Volatility (%)", yaxis_title="Return (%)",
                                      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
                     fig = apply_plotly_theme(fig)
                     st.plotly_chart(fig, use_container_width=True)
                     
                     col1, col2, col3 = st.columns(3)
-                    col1.metric("Min Vol", f"{frontier_df['Volatility'].min()*100:.2f}%")
-                    col2.metric("Max Return", f"{frontier_df['Return'].max()*100:.2f}%")
-                    col3.metric("Max Sharpe", f"{frontier_df['Sharpe'].max():.3f}")
+                    col1.metric("📉 Min Vol", f"{frontier_df['Volatility'].min()*100:.2f}%")
+                    col2.metric("📈 Max Return", f"{frontier_df['Return'].max()*100:.2f}%")
+                    col3.metric("⭐ Max Sharpe", f"{frontier_df['Sharpe'].max():.3f}")
         
         # TAB 8: BENCHMARK (if available)
         if tab9 is not None:
@@ -1408,29 +1489,50 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     bench_sharpe = (bench_annret - rf_rate) / bench_vol if bench_vol > 0 else 0
                     
                     bcols = st.columns(4)
-                    bcols[0].metric("Return", f"{bench_annret*100:.2f}%")
-                    bcols[1].metric("Vol", f"{bench_vol*100:.2f}%")
-                    bcols[2].metric("Sharpe", f"{bench_sharpe:.3f}")
-                    bcols[3].metric("Cum", f"{bench_cumret*100:.2f}%")
+                    bcols[0].metric("📈 Return", f"{bench_annret*100:.2f}%")
+                    bcols[1].metric("📊 Vol", f"{bench_vol*100:.2f}%")
+                    bcols[2].metric("⭐ Sharpe", f"{bench_sharpe:.3f}")
+                    bcols[3].metric("💰 Cum", f"{bench_cumret*100:.2f}%")
+                    
+                    st.markdown("---")
                     
                     portfolio_keys = list(analyzer.portfolios.keys())
                     sel_bench = st.multiselect("Compare with", portfolio_keys, default=portfolio_keys[:3], format_func=lambda x: analyzer.portfolios[x]['name'], key="bench_sel")
                     
                     if sel_bench:
+                        st.markdown("#### 📊 Performance vs Benchmark")
                         fig = go.Figure()
+                        
                         bench_cum = (1 + benchmark_returns).cumprod() * 100
-                        fig.add_trace(go.Scatter(x=bench_cum.index, y=bench_cum.values.flatten(), name=f"{get_display_name(st.session_state.benchmark)} (Benchmark)",
-                            mode='lines', line=dict(color='#FFFFFF', width=3, dash='dash')))
+                        bench_vals = bench_cum.values.flatten() if hasattr(bench_cum.values, 'flatten') else bench_cum.values
+                        fig.add_trace(go.Scatter(x=bench_cum.index, y=bench_vals, name=f"{get_display_name(st.session_state.benchmark)} (Benchmark)",
+                            mode='lines', line=dict(color='#FFFFFF', width=3, dash='dash'),
+                            hovertemplate=f'<b>{get_display_name(st.session_state.benchmark)}</b><br>Value: %{{y:.2f}}<extra></extra>'))
                         
                         for i, p_name in enumerate(sel_bench):
                             p = analyzer.portfolios[p_name]
                             cum_val = (1 + p['returns']).cumprod() * 100
                             fig.add_trace(go.Scatter(x=cum_val.index, y=cum_val.values, name=p['name'], mode='lines',
-                                line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2)))
+                                line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2.5),
+                                hovertemplate=f'<b>{p["name"]}</b><br>Value: %{{y:.2f}}<extra></extra>'))
                         
-                        fig.update_layout(height=400, hovermode='x unified')
+                        fig.update_layout(height=450, hovermode='x unified', xaxis_title="Date", yaxis_title="Value (Base 100)",
+                                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
                         fig = apply_plotly_theme(fig)
                         st.plotly_chart(fig, use_container_width=True)
+                        
+                        st.markdown("#### 📋 Comparison Table")
+                        bench_comp = [{'Strategy': f"{get_display_name(st.session_state.benchmark)} (Benchmark)", 'Return': f"{bench_annret*100:.2f}%",
+                                      'Vol': f"{bench_vol*100:.2f}%", 'Sharpe': f"{bench_sharpe:.3f}", 'Excess': "-"}]
+                        for p_name in sel_bench:
+                            p = analyzer.portfolios[p_name]
+                            excess = (p['annualized_return'] - bench_annret) * 100
+                            bench_comp.append({'Strategy': p['name'], 'Return': f"{p['annualized_return']*100:.2f}%",
+                                'Vol': f"{p['annualized_volatility']*100:.2f}%", 'Sharpe': f"{p['sharpe_ratio']:.3f}",
+                                'Excess': f"{excess:+.2f}%"})
+                        st.markdown(create_styled_table(pd.DataFrame(bench_comp)), unsafe_allow_html=True)
+                else:
+                    st.warning("⚠️ Benchmark data not available")
         
         # EXPORT TAB
         export_tab = tab9 if tab9 is not None else tab8
@@ -1441,32 +1543,37 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             col1, col2 = st.columns(2)
             
             with col1:
-                st.markdown("##### 📊 Excel Report")
+                st.markdown("#### 📊 Excel Report")
                 if OPENPYXL_AVAILABLE:
                     if st.button("Generate Excel", use_container_width=True, key="exp_xlsx"):
-                        try:
-                            filename = analyzer.export_to_excel()
-                            with open(filename, 'rb') as f:
-                                st.download_button("⬇️ Download", f, filename, key="dl_xlsx")
-                            st.success("✅ Ready!")
-                        except Exception as e:
-                            st.error(f"Error: {str(e)}")
+                        with st.spinner("Creating..."):
+                            try:
+                                filename = analyzer.export_to_excel()
+                                with open(filename, 'rb') as f:
+                                    st.download_button("⬇️ Download Excel", f, filename, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_xlsx")
+                                st.success("✅ Ready!")
+                            except Exception as e:
+                                st.error(f"Error: {str(e)}")
+                else:
+                    st.warning("openpyxl not installed")
             
             with col2:
-                st.markdown("##### 🔗 JSON Export")
+                st.markdown("#### 🔗 JSON Export")
                 if st.button("Generate JSON", use_container_width=True, key="exp_json"):
                     export_data = {
-                        'metadata': {'generated': datetime.now().isoformat(), 'assets': symbols},
-                        'portfolios': {name: {'name': p['name'], 'return': p['annualized_return'], 'sharpe': p['sharpe_ratio']} for name, p in analyzer.portfolios.items()}
+                        'metadata': {'generated': datetime.now().isoformat(), 'assets': [{'ticker': t, 'name': get_display_name(t)} for t in symbols]},
+                        'portfolios': {name: {'name': p['name'], 'weights': {get_display_name(s): round(float(w)*100, 2) for s, w in zip(symbols, p['weights']) if w > 0.001},
+                            'metrics': {'return': round(p['annualized_return']*100, 2), 'volatility': round(p['annualized_volatility']*100, 2),
+                                'sharpe': round(p['sharpe_ratio'], 3)}} for name, p in analyzer.portfolios.items()}
                     }
-                    st.download_button("⬇️ Download", json.dumps(export_data, indent=2), f"portfolio_{datetime.now().strftime('%Y%m%d')}.json", key="dl_json")
+                    st.download_button("⬇️ Download JSON", json.dumps(export_data, indent=2), f"portfolio_{datetime.now().strftime('%Y%m%d')}.json", "application/json", key="dl_json")
 
 # Footer
 st.markdown("---")
 st.markdown("""
 <div class="footer-section">
-    <h3>📊 Portfolio Analyzer Pro v7</h3>
-    <p><strong>Features:</strong> 7 Strategies • Walk-Forward Backtest • Yahoo Search • Deep Statistics</p>
+    <h3>📊 Portfolio Analyzer Pro v7.1</h3>
+    <p><strong>Features:</strong> 7 Strategies • Walk-Forward Backtest • Yahoo Search • Deep Statistics • GARCH</p>
     <p style="opacity:0.6;font-size:0.8rem;">⚠️ Educational purposes only. Not financial advice.</p>
 </div>
 """, unsafe_allow_html=True)
