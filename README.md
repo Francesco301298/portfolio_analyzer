@@ -4,7 +4,7 @@ Advanced Multi-Asset Portfolio Optimization System built with Streamlit.
 
 ## 🚀 Features
 
-- **8 Portfolio Optimization Strategies**:
+- **7 Portfolio Optimization Strategies**:
   - Equally Weighted
   - Minimum Volatility
   - Maximum Return
@@ -12,10 +12,10 @@ Advanced Multi-Asset Portfolio Optimization System built with Streamlit.
   - Risk Parity
   - Markowitz Mean-Variance
   - Hierarchical Risk Parity (HRP)
-  - Black-Litterman
 
 - **Advanced Analytics**:
   - Rolling performance analysis
+  - Deep-dive Statistics
   - Correlation matrix
   - Efficient frontier visualization
   - Benchmark comparison
