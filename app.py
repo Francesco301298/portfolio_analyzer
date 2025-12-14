@@ -1452,8 +1452,9 @@ with tab6:
         **Reference:** Bailey, D. H., & López de Prado, M. (2014). "The Probability of Backtest Overfitting." 
         *Journal of Computational Finance*, 20(4).
         """)
+
+        ---
     
-        
         ### What You Learn From This Tab
         
         ✅ **Robustness:** Does the strategy work across different market regimes?  
