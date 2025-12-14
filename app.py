@@ -264,28 +264,63 @@ def search_yahoo_finance(query):
 
 # Ticker Database
 TICKER_INFO = {
-    "AAPL": "Apple", "MSFT": "Microsoft", "GOOGL": "Alphabet", "AMZN": "Amazon",
-    "META": "Meta", "NVDA": "NVIDIA", "AMD": "AMD", "INTC": "Intel",
+    "AAPL": "Apple", "MSFT": "Microsoft", "GOOGL": "Alphabet (Google)", "AMZN": "Amazon",
+    "META": "Meta (Facebook)", "NVDA": "NVIDIA", "AMD": "AMD", "INTC": "Intel",
     "CRM": "Salesforce", "ADBE": "Adobe", "NFLX": "Netflix", "PYPL": "PayPal",
-    "TSLA": "Tesla", "JPM": "JPMorgan", "BAC": "Bank of America", "GS": "Goldman Sachs",
-    "V": "Visa", "MA": "Mastercard", "JNJ": "Johnson & Johnson", "PFE": "Pfizer",
-    "XOM": "ExxonMobil", "CVX": "Chevron", "^GSPC": "S&P 500", "^DJI": "Dow Jones",
-    "^IXIC": "NASDAQ", "SPY": "SPDR S&P 500", "QQQ": "NASDAQ 100 ETF", "VTI": "Total Market",
-    "GLD": "Gold ETF", "SLV": "Silver ETF", "BTC-USD": "Bitcoin", "ETH-USD": "Ethereum",
-    "TLT": "20+ Year Treasury", "AGG": "Aggregate Bond",
+    "QCOM": "Qualcomm", "AVGO": "Broadcom", "PLTR": "Palantir", "CRWD": "CrowdStrike",
+    "SNOW": "Snowflake", "NET": "Cloudflare", "CSCO": "Cisco", "ORCL": "Oracle",
+    "IBM": "IBM", "SHOP": "Shopify", "SQ": "Block (Square)", "UBER": "Uber",
+    "JPM": "JPMorgan Chase", "BAC": "Bank of America", "WFC": "Wells Fargo", "C": "Citigroup",
+    "GS": "Goldman Sachs", "MS": "Morgan Stanley", "BLK": "BlackRock", "SCHW": "Charles Schwab",
+    "AXP": "American Express", "V": "Visa", "MA": "Mastercard", "COF": "Capital One",
+    "JNJ": "Johnson & Johnson", "UNH": "UnitedHealth", "PFE": "Pfizer", "ABBV": "AbbVie",
+    "TMO": "Thermo Fisher", "ABT": "Abbott Labs", "MRK": "Merck", "LLY": "Eli Lilly",
+    "AMGN": "Amgen", "BMY": "Bristol-Myers Squibb", "GILD": "Gilead Sciences", "ISRG": "Intuitive Surgical",
+    "TSLA": "Tesla", "HD": "Home Depot", "MCD": "McDonald's", "NKE": "Nike",
+    "SBUX": "Starbucks", "LOW": "Lowe's", "TGT": "Target", "COST": "Costco",
+    "WMT": "Walmart", "PG": "Procter & Gamble", "KO": "Coca-Cola", "PEP": "PepsiCo",
+    "DIS": "Disney", "ABNB": "Airbnb", "BKNG": "Booking Holdings",
+    "XOM": "ExxonMobil", "CVX": "Chevron", "COP": "ConocoPhillips", "SLB": "Schlumberger",
+    "EOG": "EOG Resources", "MPC": "Marathon Petroleum", "OXY": "Occidental Petroleum",
+    "DVN": "Devon Energy", "HAL": "Halliburton", "KMI": "Kinder Morgan",
+    "^GSPC": "S&P 500", "^DJI": "Dow Jones", "^IXIC": "NASDAQ Composite",
+    "^RUT": "Russell 2000", "^FTSE": "FTSE 100", "^GDAXI": "DAX (Germany)",
+    "^N225": "Nikkei 225", "^STOXX50E": "Euro Stoxx 50",
+    "SPY": "SPDR S&P 500 ETF", "VOO": "Vanguard S&P 500", "VTI": "Vanguard Total Market",
+    "QQQ": "Invesco NASDAQ 100", "IWM": "iShares Russell 2000", "VEA": "Vanguard FTSE Developed",
+    "VWO": "Vanguard FTSE Emerging", "EEM": "iShares MSCI Emerging", "EFA": "iShares MSCI EAFE",
+    "ACWI": "iShares MSCI ACWI", "XLK": "Technology Select SPDR", "XLV": "Health Care Select SPDR",
+    "XLF": "Financial Select SPDR", "XLE": "Energy Select SPDR", "XLI": "Industrial Select SPDR",
+    "XLY": "Consumer Discret. SPDR", "XLP": "Consumer Staples SPDR", "XLU": "Utilities Select SPDR",
+    "VNQ": "Vanguard Real Estate", "ARKK": "ARK Innovation ETF",
+    "BTC-USD": "Bitcoin", "ETH-USD": "Ethereum", "BNB-USD": "Binance Coin",
+    "SOL-USD": "Solana", "ADA-USD": "Cardano", "XRP-USD": "Ripple (XRP)",
+    "DOGE-USD": "Dogecoin", "DOT-USD": "Polkadot", "AVAX-USD": "Avalanche",
+    "TLT": "iShares 20+ Year Treasury", "IEF": "iShares 7-10 Year Treasury",
+    "SHY": "iShares 1-3 Year Treasury", "AGG": "iShares Core US Aggregate",
+    "BND": "Vanguard Total Bond", "LQD": "iShares Investment Grade Corp",
+    "HYG": "iShares High Yield Corp", "TIP": "iShares TIPS Bond",
+    "GLD": "SPDR Gold Shares", "IAU": "iShares Gold Trust", "SLV": "iShares Silver Trust",
+    "GDX": "VanEck Gold Miners", "GDXJ": "VanEck Junior Gold Miners",
+    "USO": "United States Oil Fund", "UNG": "United States Natural Gas",
+    "DBA": "Invesco DB Agriculture", "DBC": "Invesco DB Commodity Index",
+    "PDBC": "Invesco Optimum Yield Diversified Commodity",
+    "CPER": "United States Copper Index", "WEAT": "Teucrium Wheat Fund",
+    "CORN": "Teucrium Corn Fund", "SOYB": "Teucrium Soybean Fund",
 }
 
 TICKER_DATABASE = {
-    "🇺🇸 US Tech": ["AAPL","MSFT","GOOGL","AMZN","META","NVDA","AMD","INTC","CRM","ADBE","NFLX","PYPL"],
-    "🇺🇸 US Finance": ["JPM","BAC","WFC","C","GS","MS","BLK","V","MA"],
-    "🇺🇸 US Healthcare": ["JNJ","UNH","PFE","ABBV","MRK","LLY","AMGN","BMY"],
-    "🇺🇸 US Consumer": ["TSLA","HD","MCD","NKE","SBUX","WMT","PG","KO","PEP","DIS"],
-    "🇺🇸 US Energy": ["XOM","CVX","COP","SLB","EOG","OXY"],
-    "📊 Indices": ["^GSPC","^DJI","^IXIC","^RUT","^FTSE","^GDAXI"],
-    "📈 ETFs": ["SPY","VOO","VTI","QQQ","IWM","VEA","VWO","EEM"],
-    "💎 Crypto": ["BTC-USD","ETH-USD","BNB-USD","SOL-USD","ADA-USD","XRP-USD"],
-    "🏛️ Bonds": ["TLT","IEF","SHY","AGG","BND","LQD","HYG"],
-    "🛢️ Commodities": ["GLD","IAU","SLV","USO","UNG","DBA","DBC","CPER"]
+    "🇺🇸 US Tech": ["AAPL","MSFT","GOOGL","AMZN","META","NVDA","AMD","INTC","CRM","ADBE","NFLX","PYPL","PLTR","CRWD","SNOW","NET"],
+    "🇺🇸 US Finance": ["JPM","BAC","WFC","C","GS","MS","BLK","SCHW","AXP","V","MA","COF"],
+    "🇺🇸 US Healthcare": ["JNJ","UNH","PFE","ABBV","TMO","ABT","MRK","LLY","AMGN","BMY","GILD","ISRG"],
+    "🇺🇸 US Consumer": ["TSLA","HD","MCD","NKE","SBUX","LOW","TGT","COST","WMT","PG","KO","PEP"],
+    "🇺🇸 US Energy": ["XOM","CVX","COP","SLB","EOG","MPC","OXY","DVN","HAL","KMI"],
+    "📊 Indices": ["^GSPC","^DJI","^IXIC","^RUT","^FTSE","^GDAXI","^N225","^STOXX50E"],
+    "📈 ETF Broad": ["SPY","VOO","VTI","QQQ","IWM","VEA","VWO","EEM","EFA","ACWI"],
+    "📈 ETF Sector": ["XLK","XLV","XLF","XLE","XLI","XLY","XLP","XLU","VNQ"],
+    "💎 Crypto": ["BTC-USD","ETH-USD","BNB-USD","SOL-USD","ADA-USD","XRP-USD","DOGE-USD"],
+    "🏛️ Bonds": ["TLT","IEF","SHY","AGG","BND","LQD","HYG","TIP"],
+    "🛢️ Commodities": ["GLD","IAU","SLV","GDX","GDXJ","USO","UNG","DBA","DBC","PDBC","CPER","WEAT","CORN","SOYB"]
 }
 
 def get_display_name(ticker):
@@ -938,7 +973,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     annotations=[dict(text=portfolio['name'].split()[0], x=0.5, y=0.5, font_size=11, font_color='#E2E8F0', showarrow=False)])
                 fig = apply_plotly_theme(fig)
                 st.plotly_chart(fig, use_container_width=True)
-# Part 5: Performance and Rolling Tabs (FULL SIZE)
+# Part 5: Performance, Rolling, and Deep-dive Statistics Tabs
 
         # TAB 3: PERFORMANCE
         with tab3:
@@ -980,7 +1015,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             else:
                 st.warning("⚠️ Select at least one strategy")
         
-        # TAB 4: ROLLING (FULL SIZE)
+        # TAB 4: ROLLING
         with tab4:
             st.markdown("### 🔄 Rolling Analysis")
             st.info(f"📊 Window: **{window_years} years** ({window_years * 252} days)")
@@ -1011,7 +1046,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     fig = apply_plotly_theme(fig)
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    st.markdown("#### ⭐ Rolling Sharpe Ratio")
+                    st.markdown("#### ⭐ Rolling Sharpe")
                     fig = go.Figure()
                     for i, (name, data) in enumerate(rolling_data.items()):
                         fig.add_trace(go.Scatter(x=data.index, y=data['Sharpe'], name=name,
@@ -1025,9 +1060,8 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     st.warning("⚠️ Not enough data for rolling window")
             else:
                 st.warning("⚠️ Select at least one strategy")
-# Part 6: FULL Deep-dive Statistics Tab (restored from v6)
-
-        # TAB 5: DEEP-DIVE STATISTICS (FULL VERSION)
+        
+        # TAB 5: DEEP-DIVE STATISTICS (NEW)
         with tab5:
             st.markdown("### 🔬 Deep-dive Statistics")
             st.markdown("Statistical analysis of individual asset risk drivers using log-returns and invariance tests.")
@@ -1181,7 +1215,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     st.plotly_chart(fig, use_container_width=True)
                 
                 with col2:
-                    # Normality Tests
+                    # Kolmogorov-Smirnov test
                     st.markdown("##### Normality Tests")
                     
                     ks_stat, ks_pval = ks_test(delta_x)
@@ -1572,7 +1606,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
 st.markdown("---")
 st.markdown("""
 <div class="footer-section">
-    <h3>📊 Portfolio Analyzer Pro v7.1</h3>
+    <h3>📊 Portfolio Analyzer Pro</h3>
     <p><strong>Features:</strong> 7 Strategies • Walk-Forward Backtest • Yahoo Search • Deep Statistics • GARCH</p>
     <p style="opacity:0.6;font-size:0.8rem;">⚠️ Educational purposes only. Not financial advice.</p>
 </div>
