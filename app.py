@@ -1169,7 +1169,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 
                 with col2:
                     # Ellipsoid test on absolute returns (volatility clustering)
-                    st.markdown("##### Autocorrelation of |Returns| (Volatility Clustering)")
+                    st.markdown("##### Autocorrelation of Absolute Returns (Volatility Clustering)")
                     acf_abs, conf_int_abs, test_passed_abs = invariance_test_ellipsoid(delta_x_abs, l_bar, conf_lev)
                     
                     fig = go.Figure()
@@ -1186,7 +1186,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     if test_passed_abs:
                         st.success("✅ No volatility clustering detected")
                     else:
-                        st.info("ℹ️ Volatility clustering detected (common in financial data)")
+                        st.info("ℹ️ Volatility clustering detected")
                 
                 st.markdown("---")
                 
