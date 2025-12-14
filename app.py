@@ -1345,6 +1345,12 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 value=1.0,
                 step=0.25
             ) / 100
+            st.caption(
+                "🛑 **Embargo** removes a buffer of data between training and test periods to prevent "
+                "information leakage due to autocorrelation. \n\n"
+                "An embargo of **1%–5%** means that the first part of the dataset *after* the test window "
+                "is excluded from training. Higher values make validation more conservative."
+            )
 
             methods_to_test = st.multiselect(
                 "Strategies",
@@ -1478,6 +1484,12 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         "PBO",
                         f"{pbo:.2%}",
                         help="Probability that the best in-sample strategy underperforms out-of-sample."
+                    )
+                    st.caption(
+                        "📉 **PBO (Probability of Backtest Overfitting)** estimates how often the strategy that "
+                        "looks best in-sample actually performs poorly out-of-sample. \n\n"
+                        "Low PBO means the strategy ranking is stable and reliable. "
+                        "High PBO indicates selection bias and overfitting."
                     )
                     st.markdown("---")
 
