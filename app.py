@@ -1348,11 +1348,11 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             1. **Split time into K folds** (e.g., 5 periods of ~2 years each for 2015-2024)
             2. **Create all possible train/test combinations** (e.g., 10 different splits)
             3. **For each split:**
-               - Optimize strategy on **training data only** (e.g., 2019-2024)
-               - Evaluate performance on **held-out test data** (e.g., 2015-2018)
-               - Apply **embargo** to prevent information leakage
+            - Optimize strategy on **training data only** (e.g., 2019-2024)
+            - Evaluate performance on **held-out test data** (e.g., 2015-2018)
+            - Apply **embargo** to prevent information leakage
             4. **Aggregate results** across all splits to get a **distribution** of out-of-sample performance
-        
+
                 ### What You Learn From This Tab
                 
                 ✅ **Robustness:** Does the strategy work across different market regimes?  
@@ -1360,7 +1360,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 ✅ **Overfitting Risk:** Is the high Sharpe due to skill or luck?  
                 ✅ **Tail Risk:** What's the worst-case scenario in unseen data?  
                 
-        
+
             """)
             
             with st.expander("📚 Mathematical Framework"):
@@ -1380,20 +1380,20 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 
                 3. **For each combination** $\mathcal{C} = \{i_1, ..., i_{N^*}\}$:
                 
-                   - **Test set:** $T_{test} = F_{i_1} \cup ... \cup F_{i_{N^*}}$
-                   
-                   - **Embargo set:** $E = \{t \in T : t > \max(T_{test}), t \leq \max(T_{test}) + \delta\}$  
-                     where $\delta$ is the embargo period
-                   
-                   - **Train set:** $T_{train} = T \setminus (T_{test} \cup E)$
+                - **Test set:** $T_{test} = F_{i_1} \cup ... \cup F_{i_{N^*}}$
+                
+                - **Embargo set:** $E = \{t \in T : t > \max(T_{test}), t \leq \max(T_{test}) + \delta\}$  
+                    where $\delta$ is the embargo period
+                
+                - **Train set:** $T_{train} = T \setminus (T_{test} \cup E)$
                 
                 4. **Optimize** portfolio weights $w^*$ on $T_{train}$:
                 
-                   $$w^* = \arg\max_w \text{Objective}(R_{train}, w)$$
+                $$w^* = \arg\max_w \text{Objective}(R_{train}, w)$$
                 
                 5. **Evaluate** on $T_{test}$:
                 
-                   $$\text{Performance}_{OOS} = f(R_{test} \cdot w^*)$$
+                $$\text{Performance}_{OOS} = f(R_{test} \cdot w^*)$$
                 
                 ---
                 
@@ -1465,7 +1465,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             
             st.markdown("---")
             st.markdown("## ⚙️ Configuration")
-        
+
             # ==========================
             # CONFIGURATION
             # ==========================
@@ -1474,7 +1474,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 n_splits = st.selectbox("Number of folds (K)", [5, 6, 8], index=0)
             with col2:
                 n_test_splits = st.selectbox("Test folds per split", [1, 2], index=1)
-        
+
             embargo_pct = st.slider(
                 "Embargo (% of dataset)",
                 min_value=0.0,
@@ -1488,22 +1488,22 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 "An embargo of **1%–5%** means that data immediately following the test window "
                 "is excluded from training. Higher values make validation more conservative."
             )
-        
+
             methods_to_test = st.multiselect(
                 "Strategies",
                 ["equal", "min_vol", "max_sharpe", "risk_parity"],
                 default=["equal", "min_vol", "max_sharpe", "risk_parity"]
             )
-        
+
             method_names = {
-                "Equally Weighted Portfolio": "Equally Weighted",
-                "Minimum Volatility Portfolio": "Minimum Volatility",
-                "Maximum Sharpe Portfolio": "Maximum Sharpe",
-                "Risk Parity Portfolio": "Risk Parity",
-                "Maximum Return Portfolio": "Maximum Return",
-                "Hierarchical Risk Parity Portfolio": "Hierarchical Risk Parity"
+                "equal": "Equally Weighted",
+                "min_vol": "Minimum Volatility",
+                "max_sharpe": "Maximum Sharpe",
+                "risk_parity": "Risk Parity",
+                "max_return": "Maximum Return",
+                "hrp": "Hierarchical Risk Parity"
             }
-        
+
             # Primary metric for PBO calculation
             primary_metric = st.selectbox(
                 "Primary metric for PBO",
@@ -1511,7 +1511,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 index=1,
                 help="The metric used to calculate Probability of Backtest Overfitting"
             )
-        
+
             # ==========================
             # ROBUST METRICS CALCULATOR
             # ==========================
@@ -1593,12 +1593,12 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     'cvar_95': cvar_95,
                     'win_rate': win_rate
                 }
-        
+
             # ==========================
             # CORE FUNCTIONS (AFML)
             # ==========================
             from itertools import combinations
-        
+
             def combinatorial_purged_cv(dates, n_splits, n_test_splits, embargo_pct):
                 """
                 Creates train/test splits with embargo to prevent leakage.
@@ -1615,7 +1615,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     start_idx = i * fold_size
                     end_idx = (i + 1) * fold_size if i < n_splits - 1 else len(dates)
                     folds.append(dates[start_idx:end_idx])
-        
+
                 splits = []
                 embargo_size = int(len(dates) * embargo_pct)
                 
@@ -1640,13 +1640,13 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         continue
                     
                     splits.append((train_dates.sort_values(), test_dates))
-        
+
                 if len(splits) == 0:
                     raise ValueError("No valid splits created. Adjust parameters.")
                 
                 return splits
-        
-        
+
+
             def run_cpcv_backtest(
                 returns_df,
                 methods,
@@ -1664,7 +1664,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     n_test_splits,
                     embargo_pct
                 )
-        
+
                 # Store all metrics for both IS and OOS
                 is_metrics_all = {m: [] for m in methods}
                 oos_metrics_all = {m: [] for m in methods}
@@ -1680,7 +1680,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     
                     train_returns = returns_df.loc[train_idx]
                     test_returns = returns_df.loc[test_idx]
-        
+
                     for method in methods:
                         try:
                             # Optimize on training data
@@ -1718,19 +1718,19 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 
                 progress_bar.empty()
                 status_text.empty()
-        
+
                 return is_metrics_all, oos_metrics_all, oos_returns
-        
-        
+
+
             def compute_pbo(is_metrics, oos_metrics, metric_name='sharpe'):
                 """
                 Compute Probability of Backtest Overfitting for specified metric.
                 """
                 # Extract metric values
                 is_values = {method: [m[metric_name] for m in metrics] 
-                             for method, metrics in is_metrics.items()}
+                            for method, metrics in is_metrics.items()}
                 oos_values = {method: [m[metric_name] for m in metrics] 
-                              for method, metrics in oos_metrics.items()}
+                            for method, metrics in oos_metrics.items()}
                 
                 is_df = pd.DataFrame(is_values).dropna()
                 oos_df = pd.DataFrame(oos_values).dropna()
@@ -1761,8 +1761,8 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 pbo = np.mean(oos_rank_of_best_is > median_rank)
                 
                 return pbo
-        
-        
+
+
             # ==========================
             # RUN BACKTEST
             # ==========================
@@ -1786,7 +1786,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             pbo = compute_pbo(is_metrics_all, oos_metrics_all, primary_metric)
                             
                             n_valid_splits = len([m for m in oos_metrics_all[methods_to_test[0]] 
-                                                 if not np.isnan(m['sharpe'])])
+                                                if not np.isnan(m['sharpe'])])
                             st.success(f"✅ Validation completed ({n_valid_splits} valid splits)")
                             
                         except ValueError as e:
@@ -1795,9 +1795,9 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         except Exception as e:
                             st.error(f"Unexpected error: {str(e)}")
                             st.stop()
-        
+
                     st.markdown("---")
-        
+
                     # ==========================
                     # PBO METRIC
                     # ==========================
@@ -1830,7 +1830,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             "**< 10%** = Excellent | **< 30%** = Acceptable | **> 50%** = Severe overfitting"
                         )
                     st.markdown("---")
-        
+
                     # ==========================
                     # MULTI-METRIC DISTRIBUTIONS
                     # ==========================
@@ -1852,7 +1852,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             
                             for i, method in enumerate(methods_to_test):
                                 values = [m[metric_key] for m in oos_metrics_all[method] 
-                                         if not np.isnan(m[metric_key])]
+                                        if not np.isnan(m[metric_key])]
                                 
                                 # Handle special case for max_drawdown (convert to %)
                                 if metric_key == 'max_drawdown':
@@ -1878,13 +1878,15 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
                     
                     st.markdown("---")
-        
+
                     # ==========================
-                    # COMPREHENSIVE RANKING TABLE
+                    # COMPREHENSIVE RANKING TABLE (NUOVO STILE)
                     # ==========================
                     st.markdown("#### 🏆 Comprehensive Multi-Metric Ranking")
-        
+
                     ranking_data = []
+                    ranking_data_raw = []  # Per il sorting
+                    
                     for method in methods_to_test:
                         metrics_list = oos_metrics_all[method]
                         
@@ -1897,50 +1899,59 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         win_rates = [m['win_rate'] for m in metrics_list if not np.isnan(m['win_rate'])]
                         
                         if len(sharpes) > 0:
-                            ranking_data.append({
-                                "strategy": method,
-                                "name": method_names.get(method, method),
-                                "sharpe": np.median(sharpes),
-                                "sortino": np.median(sortinos) if sortinos else np.nan,
-                                "calmar": np.median(calmars) if calmars else np.nan,
-                                "max_dd": np.max(max_dds) * 100 if max_dds else np.nan,
-                                "cvar": np.median(cvars) * 100 if cvars else np.nan,
-                                "win_rate": np.mean(win_rates) * 100 if win_rates else np.nan
+                            # Raw data for sorting
+                            raw_sharpe = np.median(sharpes)
+                            raw_sortino = np.median(sortinos) if sortinos else np.nan
+                            raw_calmar = np.median(calmars) if calmars else np.nan
+                            
+                            ranking_data_raw.append({
+                                "method": method,
+                                "sharpe": raw_sharpe,
+                                "sortino": raw_sortino,
+                                "calmar": raw_calmar
                             })
-        
-                    # Sort by primary metric
-                    ranking_data.sort(key=lambda x: x[primary_metric], reverse=True)
+                            
+                            # Formatted data for display
+                            ranking_data.append({
+                                "method": method,
+                                "Strategy": method_names.get(method, method),
+                                "Sharpe": f"{raw_sharpe:.3f}",
+                                "Sortino": f"{raw_sortino:.3f}" if not np.isnan(raw_sortino) else "N/A",
+                                "Calmar": f"{raw_calmar:.3f}" if not np.isnan(raw_calmar) else "N/A",
+                                "Max DD": f"{np.max(max_dds)*100:.2f}%" if max_dds else "N/A",
+                                "CVaR (5%)": f"{np.median(cvars)*100:.2f}%" if cvars else "N/A",
+                                "Win Rate": f"{np.mean(win_rates)*100:.1f}%" if win_rates else "N/A"
+                            })
+
+                    # Sort by primary metric using raw data
+                    metric_map = {'sharpe': 'sharpe', 'sortino': 'sortino', 'calmar': 'calmar'}
+                    sort_key = metric_map.get(primary_metric, 'sharpe')
                     
-                    # Display with cards
-                    for i, data in enumerate(ranking_data):
+                    # Sort raw data
+                    ranking_data_raw.sort(key=lambda x: x[sort_key] if not np.isnan(x[sort_key]) else -999, reverse=True)
+                    
+                    # Reorder display data based on sorted raw data
+                    method_order = [item['method'] for item in ranking_data_raw]
+                    ranking_data = sorted(ranking_data, key=lambda x: method_order.index(x['method']))
+
+                    # Add rank icons
+                    for i, row in enumerate(ranking_data):
                         icon = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else "📊"
-                        
-                        with st.container():
-                            st.markdown(f"**{icon} {data['name']}**")
-                            
-                            col1, col2, col3, col4, col5, col6 = st.columns(6)
-                            
-                            with col1:
-                                st.metric("Sharpe", f"{data['sharpe']:.2f}")
-                            with col2:
-                                st.metric("Sortino", f"{data['sortino']:.2f}")
-                            with col3:
-                                st.metric("Calmar", f"{data['calmar']:.2f}")
-                            with col4:
-                                st.metric("Max DD", f"{data['max_dd']:.1f}%")
-                            with col5:
-                                st.metric("CVaR", f"{data['cvar']:.2f}%")
-                            with col6:
-                                st.metric("Win Rate", f"{data['win_rate']:.1f}%")
-                            
-                            if i < len(ranking_data) - 1:
-                                st.markdown("---")
-        
+                        row['#'] = f"{icon} {i+1}"
+
+                    # Create DataFrame with proper column order
+                    ranking_df = pd.DataFrame(ranking_data)
+                    cols = ['#', 'Strategy', 'Sharpe', 'Sortino', 'Calmar', 'Max DD', 'CVaR (5%)', 'Win Rate']
+                    ranking_df = ranking_df[cols]
+
+                    # Display styled table
+                    st.markdown(create_styled_table(ranking_df, f"Ranked by {primary_metric.title()} (Median OOS)"), unsafe_allow_html=True)
+
                     st.caption(
-                        "📊 Rankings are based on median OOS performance across all splits. "
+                        f"📊 Rankings are based on median OOS performance across all splits. "
                         f"Sorted by **{primary_metric.title()}**."
                     )
-        
+
                     # ==========================
                     # METRIC INTERPRETATION GUIDE
                     # ==========================
@@ -1987,80 +1998,94 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         - Low Max Drawdown = sustainable strategy
                         - Moderate CVaR = controlled tail risk
                         """)
-        
+
                     st.markdown("---")
-        
+
                     # ==========================
-                    # STRATEGY-SPECIFIC ANALYSIS
+                    # STRATEGY-SPECIFIC ANALYSIS (STILE TABELLA)
                     # ==========================
                     st.markdown("### 🔍 Strategy-Specific Analysis")
                     
-                    if len(ranking_data) > 0:
-                        best_overall = ranking_data[0]
+                    if len(ranking_data_raw) > 0:
+                        # Get best and worst strategies from raw data
+                        best_method = ranking_data_raw[0]['method']
+                        best_name = method_names.get(best_method, best_method)
                         
-                        col1, col2 = st.columns(2)
+                        # Find formatted data for best strategy
+                        best_data = next((item for item in ranking_data if item['method'] == best_method), None)
+                        
+                        col1, col2 = st.columns([1, 1])
                         
                         with col1:
-                            st.markdown(f"#### 🥇 Top Strategy: {best_overall['name']}")
+                            st.markdown(f"#### 🥇 Top Strategy: {best_name}")
                             
-                            st.markdown("**Performance Profile:**")
-                            perf_col1, perf_col2, perf_col3 = st.columns(3)
-                            with perf_col1:
-                                st.metric("Sharpe", f"{best_overall['sharpe']:.2f}")
-                            with perf_col2:
-                                st.metric("Sortino", f"{best_overall['sortino']:.2f}")
-                            with perf_col3:
-                                st.metric("Calmar", f"{best_overall['calmar']:.2f}")
-                            
-                            st.markdown("**Risk Profile:**")
-                            risk_col1, risk_col2, risk_col3 = st.columns(3)
-                            with risk_col1:
-                                st.metric("Max DD", f"{best_overall['max_dd']:.1f}%")
-                            with risk_col2:
-                                st.metric("CVaR", f"{best_overall['cvar']:.2f}%")
-                            with risk_col3:
-                                st.metric("Win Rate", f"{best_overall['win_rate']:.1f}%")
+                            if best_data:
+                                # Create compact table for top strategy
+                                top_strategy_data = {
+                                    'Metric': ['Sharpe', 'Sortino', 'Calmar', 'Max DD', 'CVaR (5%)', 'Win Rate'],
+                                    'Value': [
+                                        best_data['Sharpe'],
+                                        best_data['Sortino'],
+                                        best_data['Calmar'],
+                                        best_data['Max DD'],
+                                        best_data['CVaR (5%)'],
+                                        best_data['Win Rate']
+                                    ]
+                                }
+                                st.markdown(create_styled_table(pd.DataFrame(top_strategy_data)), unsafe_allow_html=True)
                         
                         with col2:
-                            if len(ranking_data) > 1:
-                                worst_overall = ranking_data[-1]
-                                st.markdown(f"#### 📊 Comparison with {worst_overall['name']}")
+                            if len(ranking_data_raw) > 1:
+                                worst_method = ranking_data_raw[-1]['method']
+                                worst_name = method_names.get(worst_method, worst_method)
                                 
-                                sortino_diff = best_overall['sortino'] - worst_overall['sortino']
-                                dd_diff = worst_overall['max_dd'] - best_overall['max_dd']
+                                st.markdown(f"#### 📊 vs. {worst_name}")
                                 
-                                st.markdown("**Performance Advantage:**")
-                                adv_col1, adv_col2 = st.columns(2)
-                                with adv_col1:
-                                    st.metric(
-                                        "Sortino Δ", 
-                                        f"+{sortino_diff:.2f}",
-                                        delta=f"{sortino_diff/worst_overall['sortino']*100:+.1f}%"
-                                    )
-                                with adv_col2:
-                                    st.metric(
-                                        "DD Advantage", 
-                                        f"{dd_diff:.1f}pp",
-                                        delta="Lower risk" if dd_diff > 0 else "Higher risk",
-                                        delta_color="normal" if dd_diff > 0 else "inverse"
-                                    )
+                                best_sortino = ranking_data_raw[0]['sortino']
+                                worst_sortino = ranking_data_raw[-1]['sortino']
                                 
-                                if sortino_diff > 0.3 and dd_diff > 10:
-                                    st.success("✅ Top strategy shows **superior** risk-adjusted returns with **significantly** lower tail risk.")
-                                elif sortino_diff > 0.3:
-                                    st.info("📊 Top strategy offers **superior** risk-adjusted returns.")
-                                elif dd_diff > 10:
-                                    st.info("📊 Top strategy has **significantly** lower tail risk.")
-                                else:
-                                    st.warning("⚠️ Strategies show **comparable** performance profiles.")
-        
+                                # Get max_dd from original data
+                                best_max_dd = None
+                                worst_max_dd = None
+                                
+                                for method in methods_to_test:
+                                    metrics_list = oos_metrics_all[method]
+                                    max_dds = [m['max_drawdown'] for m in metrics_list if not np.isnan(m['max_drawdown'])]
+                                    
+                                    if method == best_method and max_dds:
+                                        best_max_dd = np.max(max_dds) * 100
+                                    elif method == worst_method and max_dds:
+                                        worst_max_dd = np.max(max_dds) * 100
+                                
+                                if not np.isnan(best_sortino) and not np.isnan(worst_sortino) and best_max_dd is not None and worst_max_dd is not None:
+                                    sortino_diff = best_sortino - worst_sortino
+                                    dd_diff = worst_max_dd - best_max_dd
+                                    
+                                    comparison_data = {
+                                        'Metric': ['Sortino Advantage', 'DD Advantage (pp)'],
+                                        'Value': [
+                                            f"+{sortino_diff:.2f} ({sortino_diff/worst_sortino*100:+.1f}%)" if worst_sortino != 0 else f"+{sortino_diff:.2f}",
+                                            f"{dd_diff:.1f}pp"
+                                        ]
+                                    }
+                                    st.markdown(create_styled_table(pd.DataFrame(comparison_data)), unsafe_allow_html=True)
+                                    
+                                    if sortino_diff > 0.3 and dd_diff > 10:
+                                        st.success("✅ Superior risk-adjusted returns with lower tail risk")
+                                    elif sortino_diff > 0.3:
+                                        st.info("📊 Superior risk-adjusted returns")
+                                    elif dd_diff > 10:
+                                        st.info("📊 Significantly lower tail risk")
+                                    else:
+                                        st.warning("⚠️ Comparable performance profiles")
+
                     st.markdown("---")
-        
+
                     # ==========================
                     # FINAL INTERPRETATION
                     # ==========================
                     st.markdown("## 🎯 Final Takeaway")
-        
+
                     # Determine overall assessment
                     if not np.isnan(pbo):
                         if pbo < 0.1:
@@ -2083,7 +2108,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         assessment_icon = "⚠️"
                         assessment_text = "INSUFFICIENT DATA"
                         assessment_detail = "Unable to assess overfitting risk."
-        
+
                     st.markdown(f"### {assessment_icon} Overall Assessment: **{assessment_text}**")
                     st.markdown(f"*{assessment_detail}*")
                     
@@ -2105,7 +2130,8 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             delta_color=pbo_color
                         )
                     with insight_col3:
-                        st.metric("Best Strategy", ranking_data[0]['name'])
+                        if len(ranking_data) > 0:
+                            st.metric("Best Strategy", ranking_data[0]['Strategy'])
                     
                     st.markdown("---")
                     
