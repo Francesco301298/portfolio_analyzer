@@ -1189,269 +1189,462 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
         with tab2:
             st.markdown("### 💼 Portfolio Analysis")
             
-            st.markdown("#### 📊 Strategy Comparison")
+            # ============================================================
+            # SECTION 1: THEORETICAL PERFORMANCE (NO COSTS)
+            # ============================================================
+            st.markdown("""
+            ## 📊 Theoretical Performance
             
-            # Check if we have cost-adjusted data
-            # Check if we have cost-adjusted data
-            has_costs = st.session_state.portfolios_with_costs is not None
+            This section shows portfolio performance **before transaction costs and rebalancing friction**. 
+            Think of this as the "best case scenario" - what each strategy would achieve in a frictionless world.
             
-            if has_costs and st.session_state.cost_config:
-                config = st.session_state.cost_config
-                if config['rebal_freq']:
-                    rebal_desc = config['rebal_freq']
-                elif config['rebal_thresh']:
-                    rebal_desc = f"Threshold {config['rebal_thresh']*100:.0f}%"
-                else:
-                    rebal_desc = "Buy & Hold"
-                
-                st.info(f"💰 **Costs enabled**: {config['bps']} bps per trade | **Rebalancing**: {rebal_desc}")
+            Use this to understand the **pure characteristics** of each optimization approach.
+            """)
+            
+            st.markdown("#### 🏆 Strategy Ranking")
             
             comparison_data = []
-            
-            if has_costs:
-                portfolios_data = st.session_state.portfolios_with_costs
-                for idx, (key, p) in enumerate(sorted(portfolios_data.items(), key=lambda x: x[1]['sharpe_net'], reverse=True), 1):
-                    comparison_data.append({
-                        '#': idx,
-                        'Strategy': p['name'],
-                        'Gross Return': f"{p['ann_return_gross']*100:.2f}%",
-                        'Net Return': f"{p['ann_return_net']*100:.2f}%",
-                        'Cost Drag': f"{p['cost_drag']*100:.2f}%",
-                        'Vol': f"{p['ann_vol_net']*100:.2f}%",
-                        'Sharpe (Net)': f"{p['sharpe_net']:.3f}",
-                        'Turnover': f"{p['total_turnover']*100:.1f}%",
-                        'Max DD': f"{p['max_dd_net']*100:.2f}%"
-                    })
-                table_title = "Ranked by Net Sharpe Ratio (after costs)"
-            else:
-                for idx, (key, p) in enumerate(sorted(analyzer.portfolios.items(), key=lambda x: x[1]['sharpe_ratio'], reverse=True), 1):
-                    comparison_data.append({
-                        '#': idx, 'Strategy': p['name'], 'Return': f"{p['annualized_return']*100:.2f}%",
-                        'Vol': f"{p['annualized_volatility']*100:.2f}%", 'Sharpe': f"{p['sharpe_ratio']:.3f}",
-                        'Sortino': f"{p['sortino_ratio']:.3f}", 'Max DD': f"{p['max_drawdown']*100:.2f}%"
-                    })
-                table_title = "Ranked by Sharpe Ratio"
+            for idx, (key, p) in enumerate(sorted(analyzer.portfolios.items(), key=lambda x: x[1]['sharpe_ratio'], reverse=True), 1):
+                comparison_data.append({
+                    '#': idx, 
+                    'Strategy': p['name'], 
+                    'Return': f"{p['annualized_return']*100:.2f}%",
+                    'Volatility': f"{p['annualized_volatility']*100:.2f}%", 
+                    'Sharpe': f"{p['sharpe_ratio']:.3f}",
+                    'Sortino': f"{p['sortino_ratio']:.3f}", 
+                    'Max DD': f"{p['max_drawdown']*100:.2f}%",
+                    'Calmar': f"{p['calmar_ratio']:.3f}"
+                })
             
             comparison_df = pd.DataFrame(comparison_data)
-            st.markdown(create_styled_table(comparison_df, table_title), unsafe_allow_html=True)
+            st.markdown(create_styled_table(comparison_df, "Ranked by Sharpe Ratio (Theoretical)"), unsafe_allow_html=True)
             
-            # ============ COST ANALYSIS SECTION ============
-            if has_costs:
-                st.markdown("---")
-                st.markdown("#### 💰 Cost Impact Analysis")
+            with st.expander("📖 Understanding the Metrics"):
+                st.markdown("""
+                | Metric | What it measures | Good values |
+                |--------|------------------|-------------|
+                | **Return** | Annualized average return | Higher is better |
+                | **Volatility** | Annualized standard deviation of returns | Lower = more stable |
+                | **Sharpe Ratio** | Return per unit of total risk | > 1.0 good, > 2.0 excellent |
+                | **Sortino Ratio** | Return per unit of *downside* risk | Higher than Sharpe = positive skew |
+                | **Max Drawdown** | Largest peak-to-trough decline | < 20% conservative, < 40% moderate |
+                | **Calmar Ratio** | Return divided by Max Drawdown | > 1.0 good |
                 
-                col1, col2, col3, col4 = st.columns(4)
-                
-                portfolios_data = st.session_state.portfolios_with_costs
-                
-                # Find most/least affected by costs
-                cost_drags = [(k, v['cost_drag']) for k, v in portfolios_data.items()]
-                most_affected = max(cost_drags, key=lambda x: x[1])
-                least_affected = min(cost_drags, key=lambda x: x[1])
-                
-                with col1:
-                    avg_cost_drag = np.mean([v['cost_drag'] for v in portfolios_data.values()])
-                    st.metric("Avg Cost Drag", f"{avg_cost_drag*100:.2f}%")
-                
-                with col2:
-                    avg_turnover = np.mean([v['total_turnover'] for v in portfolios_data.values()])
-                    st.metric("Avg Turnover", f"{avg_turnover*100:.1f}%")
-                
-                with col3:
-                    st.metric("Most Affected", portfolios_data[most_affected[0]]['name'].split()[0], 
-                             f"-{most_affected[1]*100:.2f}%")
-                
-                with col4:
-                    st.metric("Least Affected", portfolios_data[least_affected[0]]['name'].split()[0],
-                             f"-{least_affected[1]*100:.2f}%")
-                
-                # Gross vs Net comparison chart
-                st.markdown("##### 📊 Gross vs Net Returns")
-                
-                fig_cost = go.Figure()
-                
-                # Sort by gross return for display
-                sorted_keys = sorted(portfolios_data.keys(), key=lambda x: portfolios_data[x]['ann_return_gross'], reverse=True)
-                strategies = [portfolios_data[k]['name'] for k in sorted_keys]
-                gross_returns = [portfolios_data[k]['ann_return_gross']*100 for k in sorted_keys]
-                net_returns = [portfolios_data[k]['ann_return_net']*100 for k in sorted_keys]
-                
-                fig_cost.add_trace(go.Bar(
-                    name='Gross Return',
-                    x=strategies,
-                    y=gross_returns,
-                    marker_color='rgba(99, 102, 241, 0.7)',
-                    text=[f"{v:.1f}%" for v in gross_returns],
-                    textposition='outside',
-                    textfont=dict(size=9, color='#E2E8F0')
-                ))
-                
-                fig_cost.add_trace(go.Bar(
-                    name='Net Return',
-                    x=strategies,
-                    y=net_returns,
-                    marker_color='rgba(78, 205, 196, 0.9)',
-                    text=[f"{v:.1f}%" for v in net_returns],
-                    textposition='outside',
-                    textfont=dict(size=9, color='#E2E8F0')
-                ))
-                
-                fig_cost.update_layout(
-                    barmode='group',
-                    height=380,
-                    xaxis_tickangle=-45,
-                    yaxis_title="Annualized Return (%)",
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
-                )
-                fig_cost = apply_plotly_theme(fig_cost)
-                st.plotly_chart(fig_cost, use_container_width=True)
-                
-                # Insight box
-                # Insight box
-                with st.expander("💡 Insights on Transaction Costs"):
-                    highest_turnover = max(portfolios_data.items(), key=lambda x: x[1]['total_turnover'])
-                    lowest_turnover = min(portfolios_data.items(), key=lambda x: x[1]['total_turnover'])
-                    
-                    cost_bps = st.session_state.cost_config['bps'] if st.session_state.cost_config else 10
-                    
-                    st.markdown(f"""
-                    **Key Findings:**
-                    
-                    - **Highest turnover strategy**: {highest_turnover[1]['name']} 
-                      ({highest_turnover[1]['total_turnover']*100:.1f}% turnover)
-                    - **Lowest turnover strategy**: {lowest_turnover[1]['name']}
-                      ({lowest_turnover[1]['total_turnover']*100:.1f}% turnover)
-                    
-                    **Why this matters:**
-                    - Strategies that rebalance frequently (like Max Sharpe) often have higher turnover
-                    - Equal Weight and Risk Parity typically have lower turnover
-                    - At {cost_bps} bps per trade, the annual cost drag ranges from 
-                      {min(v['cost_drag'] for v in portfolios_data.values())*100:.2f}% to {max(v['cost_drag'] for v in portfolios_data.values())*100:.2f}%
-                    
-                    **Recommendation:**
-                    Consider the **net Sharpe ratio** (after costs) when selecting a strategy, not just gross performance.
-                    """)           
+                **Which metric matters most?**
+                - **Risk-averse investors**: Focus on Max Drawdown and Volatility
+                - **Return-focused investors**: Focus on Return and Sharpe
+                - **Balanced approach**: Sortino and Calmar (penalize only downside)
+                """)
+            
             st.markdown("---")
             
             col1, col2 = st.columns(2)
             
             with col1:
                 st.markdown("#### 📊 Returns by Strategy")
-                if has_costs:
-                    port_data = sorted(st.session_state.portfolios_with_costs.values(), key=lambda x: x['ann_return_net'], reverse=True)
-                    fig = go.Figure(data=[go.Bar(
-                        x=[p['name'] for p in port_data], y=[p['ann_return_net'] * 100 for p in port_data],
-                        marker_color=CHART_COLORS[:len(port_data)],
-                        text=[f"{p['ann_return_net']*100:.1f}%" for p in port_data],
-                        textposition='outside', textfont=dict(color='#E2E8F0', size=9)
-                    )])
-                else:
-                    port_data = sorted(analyzer.portfolios.values(), key=lambda x: x['annualized_return'], reverse=True)
-                    fig = go.Figure(data=[go.Bar(
-                        x=[p['name'] for p in port_data], y=[p['annualized_return'] * 100 for p in port_data],
-                        marker_color=CHART_COLORS[:len(port_data)],
-                        text=[f"{p['annualized_return']*100:.1f}%" for p in port_data],
-                        textposition='outside', textfont=dict(color='#E2E8F0', size=9)
-                    )])
-                fig.update_layout(height=380, xaxis_tickangle=-45, yaxis_title="Return (%)")
+                port_data = sorted(analyzer.portfolios.values(), key=lambda x: x['annualized_return'], reverse=True)
+                fig = go.Figure(data=[go.Bar(
+                    x=[p['name'] for p in port_data], 
+                    y=[p['annualized_return'] * 100 for p in port_data],
+                    marker_color=CHART_COLORS[:len(port_data)],
+                    text=[f"{p['annualized_return']*100:.1f}%" for p in port_data],
+                    textposition='outside', 
+                    textfont=dict(color='#E2E8F0', size=9)
+                )])
+                fig.update_layout(height=380, xaxis_tickangle=-45, yaxis_title="Annualized Return (%)")
                 fig = apply_plotly_theme(fig)
                 st.plotly_chart(fig, use_container_width=True)
             
             with col2:
                 st.markdown("#### ⚖️ Risk vs Return")
                 fig = go.Figure()
-                if has_costs:
-                    for i, (k, p) in enumerate(st.session_state.portfolios_with_costs.items()):
-                        fig.add_trace(go.Scatter(
-                            x=[p['ann_vol_net'] * 100], y=[p['ann_return_net'] * 100],
-                            mode='markers+text', name=p['name'],
-                            marker=dict(size=16, color=CHART_COLORS[i % len(CHART_COLORS)]),
-                            text=[p['name'].split()[0]], textposition='top center', textfont=dict(color='#E2E8F0', size=8),
-                            hovertemplate=f"<b>{p['name']}</b><br>Net Return: %{{y:.2f}}%<br>Vol: %{{x:.2f}}%<extra></extra>"
-                        ))
-                else:
-                    for i, p in enumerate(analyzer.portfolios.values()):
-                        fig.add_trace(go.Scatter(
-                            x=[p['annualized_volatility'] * 100], y=[p['annualized_return'] * 100],
-                            mode='markers+text', name=p['name'],
-                            marker=dict(size=16, color=CHART_COLORS[i % len(CHART_COLORS)]),
-                            text=[p['name'].split()[0]], textposition='top center', textfont=dict(color='#E2E8F0', size=8),
-                            hovertemplate=f"<b>{p['name']}</b><br>Return: %{{y:.2f}}%<br>Vol: %{{x:.2f}}%<extra></extra>"
-                        ))
+                for i, p in enumerate(analyzer.portfolios.values()):
+                    fig.add_trace(go.Scatter(
+                        x=[p['annualized_volatility'] * 100], 
+                        y=[p['annualized_return'] * 100],
+                        mode='markers+text', 
+                        name=p['name'],
+                        marker=dict(size=16, color=CHART_COLORS[i % len(CHART_COLORS)]),
+                        text=[p['name'].split()[0]], 
+                        textposition='top center', 
+                        textfont=dict(color='#E2E8F0', size=8),
+                        hovertemplate=f"<b>{p['name']}</b><br>Return: %{{y:.2f}}%<br>Volatility: %{{x:.2f}}%<extra></extra>"
+                    ))
                 fig.update_layout(height=380, xaxis_title="Volatility (%)", yaxis_title="Return (%)", showlegend=False)
                 fig = apply_plotly_theme(fig)
                 st.plotly_chart(fig, use_container_width=True)
             
+            st.caption("💡 **Ideal position**: Top-left corner (high return, low volatility). The closer to this corner, the better the risk-adjusted performance.")
+            
             st.markdown("---")
             
-            st.markdown("#### 🔍 Portfolio Details")
+            # ============================================================
+            # SECTION 2: PORTFOLIO DEEP-DIVE
+            # ============================================================
+            st.markdown("""
+            ## 🔍 Portfolio Deep-Dive
+            
+            Select a strategy to explore its composition and characteristics in detail.
+            """)
             
             portfolio_keys = list(analyzer.portfolios.keys())
-            selected_p = st.selectbox("Select strategy", portfolio_keys, format_func=lambda x: analyzer.portfolios[x]['name'], key="port_detail")
+            selected_p = st.selectbox(
+                "Select strategy to analyze", 
+                portfolio_keys, 
+                format_func=lambda x: analyzer.portfolios[x]['name'], 
+                key="port_detail"
+            )
             portfolio = analyzer.portfolios[selected_p]
             
-            # Show metrics - use cost-adjusted if available
-            if has_costs:
-                p_costs = st.session_state.portfolios_with_costs[selected_p]
-                mcols = st.columns(7)
-                metrics_list = [
-                    ("Gross Return", f"{p_costs['ann_return_gross']*100:.2f}%"),
-                    ("Net Return", f"{p_costs['ann_return_net']*100:.2f}%"),
-                    ("Volatility", f"{p_costs['ann_vol_net']*100:.2f}%"),
-                    ("Sharpe (Net)", f"{p_costs['sharpe_net']:.3f}"),
-                    ("Sortino", f"{p_costs['sortino_net']:.3f}"),
-                    ("Max DD", f"{p_costs['max_dd_net']*100:.2f}%"),
-                    ("Turnover", f"{p_costs['total_turnover']*100:.1f}%")
-                ]
-            else:
-                mcols = st.columns(6)
-                metrics_list = [
-                    ("Return", f"{portfolio['annualized_return']*100:.2f}%"),
-                    ("Volatility", f"{portfolio['annualized_volatility']*100:.2f}%"),
-                    ("Sharpe", f"{portfolio['sharpe_ratio']:.3f}"),
-                    ("Sortino", f"{portfolio['sortino_ratio']:.3f}"),
-                    ("Max DD", f"{portfolio['max_drawdown']*100:.2f}%"),
-                    ("Calmar", f"{portfolio['calmar_ratio']:.3f}")
-                ]
+            # Metrics row
+            st.markdown("#### 📈 Key Metrics (Theoretical)")
+            mcols = st.columns(6)
+            metrics_list = [
+                ("Return", f"{portfolio['annualized_return']*100:.2f}%", "Annualized"),
+                ("Volatility", f"{portfolio['annualized_volatility']*100:.2f}%", "Annualized"),
+                ("Sharpe", f"{portfolio['sharpe_ratio']:.3f}", "Risk-adjusted"),
+                ("Sortino", f"{portfolio['sortino_ratio']:.3f}", "Downside-adjusted"),
+                ("Max DD", f"{portfolio['max_drawdown']*100:.2f}%", "Worst decline"),
+                ("Calmar", f"{portfolio['calmar_ratio']:.3f}", "Return/MaxDD")
+            ]
+            for col, (label, value, help_text) in zip(mcols, metrics_list):
+                col.metric(label, value, help=help_text)
             
-            for col, (label, value) in zip(mcols, metrics_list):
-                col.metric(label, value)
-            
-            st.markdown("##### ⚖️ Asset Allocation")
+            st.markdown("#### ⚖️ Asset Allocation")
             
             weights_data = []
             for ticker, weight in zip(symbols, portfolio['weights']):
                 if weight > 0.001:
-                    weights_data.append({'Asset': get_display_name(ticker), 'Ticker': ticker, 'Weight': weight * 100})
+                    weights_data.append({
+                        'Asset': get_display_name(ticker), 
+                        'Ticker': ticker, 
+                        'Weight': weight * 100
+                    })
             weights_df = pd.DataFrame(weights_data).sort_values('Weight', ascending=False)
             
             col1, col2 = st.columns([1, 1.2])
             
             with col1:
-                table_data = [{'Asset': r['Asset'], 'Weight': f"{r['Weight']:.2f}%"} for _, r in weights_df.iterrows()]
-                st.markdown(create_styled_table(pd.DataFrame(table_data)), unsafe_allow_html=True)
+                table_data = [{'Asset': r['Asset'], 'Ticker': r['Ticker'], 'Weight': f"{r['Weight']:.2f}%"} for _, r in weights_df.iterrows()]
+                st.markdown(create_styled_table(pd.DataFrame(table_data), "Portfolio Weights"), unsafe_allow_html=True)
+                
+                # Concentration metrics
+                top_3_weight = weights_df.head(3)['Weight'].sum()
+                n_assets_90 = len(weights_df[weights_df['Weight'].cumsum() <= 90]) + 1
+                
+                st.markdown(f"""
+                **Concentration Analysis:**
+                - Top 3 assets: **{top_3_weight:.1f}%** of portfolio
+                - Assets needed for 90% weight: **{n_assets_90}**
+                - {"⚠️ High concentration" if top_3_weight > 60 else "✅ Well diversified"}
+                """)
             
             with col2:
                 fig = go.Figure(data=[go.Pie(
-                    labels=weights_df['Asset'], values=weights_df['Weight'], hole=0.4,
-                    marker_colors=CHART_COLORS[:len(weights_df)], textinfo='percent', textposition='outside',
+                    labels=weights_df['Asset'], 
+                    values=weights_df['Weight'], 
+                    hole=0.4,
+                    marker_colors=CHART_COLORS[:len(weights_df)], 
+                    textinfo='percent', 
+                    textposition='outside',
                     textfont=dict(color='#E2E8F0', size=10),
                     hovertemplate='<b>%{label}</b><br>%{value:.2f}%<extra></extra>'
                 )])
-                fig.update_layout(height=320, showlegend=False,
-                    annotations=[dict(text=portfolio['name'].split()[0], x=0.5, y=0.5, font_size=11, font_color='#E2E8F0', showarrow=False)])
+                fig.update_layout(
+                    height=320, 
+                    showlegend=False,
+                    annotations=[dict(
+                        text=portfolio['name'].split()[0], 
+                        x=0.5, y=0.5, 
+                        font_size=11, 
+                        font_color='#E2E8F0', 
+                        showarrow=False
+                    )]
+                )
                 fig = apply_plotly_theme(fig)
                 st.plotly_chart(fig, use_container_width=True)
             
-            # ============ SEASONALITY ANALYSIS ============
             st.markdown("---")
-            st.markdown("## 📅 Seasonality Analysis")
-            st.markdown("Analyze how the selected portfolio performs across different months and years to identify seasonal patterns.")
+            
+            # ============================================================
+            # SECTION 3: COST & REBALANCING IMPACT
+            # ============================================================
+            st.markdown("""
+            ## 💰 Cost & Rebalancing Impact
+            
+            **Reality check time!** The theoretical returns above assume:
+            - Zero transaction costs
+            - Perfect rebalancing (instantaneous, free)
+            - No market impact
+            
+            In the real world, every trade costs money. This section shows how **transaction costs** and 
+            **rebalancing frequency** erode your returns.
+            """)
+            
+            # Check if we have cost-adjusted data
+            has_costs = st.session_state.portfolios_with_costs is not None
+            
+            if has_costs and st.session_state.cost_config:
+                config = st.session_state.cost_config
+                
+                # Display current configuration
+                if config['rebal_freq']:
+                    freq_names = {'D': 'Daily', 'W': 'Weekly', 'M': 'Monthly', 'Q': 'Quarterly', 'A': 'Annually'}
+                    rebal_desc = freq_names.get(config['rebal_freq'], config['rebal_freq'])
+                elif config['rebal_thresh']:
+                    rebal_desc = f"Threshold-based ({config['rebal_thresh']*100:.0f}% drift)"
+                else:
+                    rebal_desc = "Buy & Hold (no rebalancing)"
+                
+                st.success(f"**Current Configuration:** {config['bps']} bps per trade | Rebalancing: {rebal_desc}")
+                
+                portfolios_data = st.session_state.portfolios_with_costs
+                
+                # Impact Summary KPIs
+                st.markdown("#### 📉 Cost Impact Summary")
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                avg_cost_drag = np.mean([v['cost_drag'] for v in portfolios_data.values()])
+                avg_turnover = np.mean([v['total_turnover'] for v in portfolios_data.values()])
+                
+                cost_drags = [(k, v['cost_drag']) for k, v in portfolios_data.items()]
+                most_affected = max(cost_drags, key=lambda x: x[1])
+                least_affected = min(cost_drags, key=lambda x: x[1])
+                
+                with col1:
+                    st.metric(
+                        "Avg Annual Cost Drag", 
+                        f"{avg_cost_drag*100:.2f}%",
+                        delta=f"-{avg_cost_drag*100:.2f}% from gross",
+                        delta_color="inverse"
+                    )
+                
+                with col2:
+                    st.metric(
+                        "Avg Portfolio Turnover", 
+                        f"{avg_turnover*100:.0f}%",
+                        help="Total value traded as % of portfolio"
+                    )
+                
+                with col3:
+                    st.metric(
+                        "Most Impacted", 
+                        portfolios_data[most_affected[0]]['name'].split()[0],
+                        delta=f"-{most_affected[1]*100:.2f}%",
+                        delta_color="inverse"
+                    )
+                
+                with col4:
+                    st.metric(
+                        "Least Impacted", 
+                        portfolios_data[least_affected[0]]['name'].split()[0],
+                        delta=f"-{least_affected[1]*100:.2f}%",
+                        delta_color="inverse"
+                    )
+                
+                # Detailed comparison table
+                st.markdown("#### 📊 Gross vs Net Performance")
+                
+                cost_comparison_data = []
+                for idx, (key, p) in enumerate(sorted(portfolios_data.items(), key=lambda x: x[1]['sharpe_net'], reverse=True), 1):
+                    # Calculate rank change
+                    gross_rank = sorted(portfolios_data.keys(), key=lambda x: portfolios_data[x]['sharpe_gross'], reverse=True).index(key) + 1
+                    net_rank = idx
+                    rank_change = gross_rank - net_rank
+                    rank_indicator = f"↑{rank_change}" if rank_change > 0 else f"↓{abs(rank_change)}" if rank_change < 0 else "="
+                    
+                    cost_comparison_data.append({
+                        '#': f"{idx} ({rank_indicator})",
+                        'Strategy': p['name'],
+                        'Gross Return': f"{p['ann_return_gross']*100:.2f}%",
+                        'Net Return': f"{p['ann_return_net']*100:.2f}%",
+                        'Cost Drag': f"-{p['cost_drag']*100:.2f}%",
+                        'Gross Sharpe': f"{p['sharpe_gross']:.3f}",
+                        'Net Sharpe': f"{p['sharpe_net']:.3f}",
+                        'Turnover': f"{p['total_turnover']*100:.0f}%",
+                        '# Trades': p['n_rebalances']
+                    })
+                
+                cost_comparison_df = pd.DataFrame(cost_comparison_data)
+                st.markdown(create_styled_table(cost_comparison_df, "Ranked by Net Sharpe (after costs)"), unsafe_allow_html=True)
+                
+                st.caption("💡 **Rank changes** show how strategies move when costs are considered. ↑ = improved ranking, ↓ = worse ranking")
+                
+                # Visual: Gross vs Net bar chart
+                st.markdown("#### 📊 Return Erosion by Strategy")
+                
+                fig_erosion = go.Figure()
+                
+                sorted_keys = sorted(portfolios_data.keys(), key=lambda x: portfolios_data[x]['ann_return_gross'], reverse=True)
+                strategies = [portfolios_data[k]['name'] for k in sorted_keys]
+                gross_returns = [portfolios_data[k]['ann_return_gross']*100 for k in sorted_keys]
+                net_returns = [portfolios_data[k]['ann_return_net']*100 for k in sorted_keys]
+                cost_drags_pct = [portfolios_data[k]['cost_drag']*100 for k in sorted_keys]
+                
+                # Gross returns (full bar)
+                fig_erosion.add_trace(go.Bar(
+                    name='Gross Return',
+                    x=strategies,
+                    y=gross_returns,
+                    marker_color='rgba(99, 102, 241, 0.4)',
+                    text=[f"{v:.1f}%" for v in gross_returns],
+                    textposition='outside',
+                    textfont=dict(size=9, color='#94a3b8')
+                ))
+                
+                # Net returns (overlay)
+                fig_erosion.add_trace(go.Bar(
+                    name='Net Return',
+                    x=strategies,
+                    y=net_returns,
+                    marker_color='rgba(78, 205, 196, 0.9)',
+                    text=[f"{v:.1f}%" for v in net_returns],
+                    textposition='inside',
+                    textfont=dict(size=10, color='white')
+                ))
+                
+                fig_erosion.update_layout(
+                    barmode='overlay',
+                    height=400,
+                    xaxis_tickangle=-45,
+                    yaxis_title="Annualized Return (%)",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                )
+                fig_erosion = apply_plotly_theme(fig_erosion)
+                st.plotly_chart(fig_erosion, use_container_width=True)
+                
+                st.caption("**Reading the chart:** The faded bar shows gross (theoretical) return. The solid teal bar shows net (actual) return. The gap is the cost drag.")
+                
+                # Turnover analysis
+                st.markdown("#### 🔄 Turnover Analysis")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Turnover bar chart
+                    sorted_by_turnover = sorted(portfolios_data.items(), key=lambda x: x[1]['total_turnover'], reverse=True)
+                    
+                    fig_turnover = go.Figure(data=[go.Bar(
+                        x=[portfolios_data[k]['name'] for k, v in sorted_by_turnover],
+                        y=[v['total_turnover']*100 for k, v in sorted_by_turnover],
+                        marker_color=[CHART_COLORS[i % len(CHART_COLORS)] for i in range(len(sorted_by_turnover))],
+                        text=[f"{v['total_turnover']*100:.0f}%" for k, v in sorted_by_turnover],
+                        textposition='outside',
+                        textfont=dict(size=9, color='#E2E8F0')
+                    )])
+                    fig_turnover.update_layout(
+                        height=300,
+                        xaxis_tickangle=-45,
+                        yaxis_title="Total Turnover (%)"
+                    )
+                    fig_turnover = apply_plotly_theme(fig_turnover)
+                    st.plotly_chart(fig_turnover, use_container_width=True)
+                
+                with col2:
+                    # Cost efficiency scatter
+                    fig_efficiency = go.Figure()
+                    
+                    for i, (k, p) in enumerate(portfolios_data.items()):
+                        fig_efficiency.add_trace(go.Scatter(
+                            x=[p['total_turnover']*100],
+                            y=[p['sharpe_net']],
+                            mode='markers+text',
+                            name=p['name'],
+                            marker=dict(size=14, color=CHART_COLORS[i % len(CHART_COLORS)]),
+                            text=[p['name'].split()[0]],
+                            textposition='top center',
+                            textfont=dict(size=8, color='#E2E8F0'),
+                            hovertemplate=f"<b>{p['name']}</b><br>Turnover: %{{x:.0f}}%<br>Net Sharpe: %{{y:.3f}}<extra></extra>"
+                        ))
+                    
+                    fig_efficiency.update_layout(
+                        height=300,
+                        xaxis_title="Turnover (%)",
+                        yaxis_title="Net Sharpe Ratio",
+                        showlegend=False
+                    )
+                    fig_efficiency = apply_plotly_theme(fig_efficiency)
+                    st.plotly_chart(fig_efficiency, use_container_width=True)
+                
+                st.caption("**Left:** Which strategies trade more. **Right:** Cost efficiency - ideally you want high Sharpe with low turnover (top-left corner).")
+                
+                # Insights expander
+                with st.expander("💡 Key Insights & Recommendations"):
+                    # Find winner/loser
+                    best_gross = max(portfolios_data.items(), key=lambda x: x[1]['sharpe_gross'])
+                    best_net = max(portfolios_data.items(), key=lambda x: x[1]['sharpe_net'])
+                    
+                    highest_turnover = max(portfolios_data.items(), key=lambda x: x[1]['total_turnover'])
+                    lowest_turnover = min(portfolios_data.items(), key=lambda x: x[1]['total_turnover'])
+                    
+                    winner_changed = best_gross[0] != best_net[0]
+                    
+                    st.markdown(f"""
+                    ### 📊 Analysis Results
+                    
+                    **Best Strategy (Theoretical):** {best_gross[1]['name']} (Sharpe: {best_gross[1]['sharpe_gross']:.3f})
+                    
+                    **Best Strategy (After Costs):** {best_net[1]['name']} (Sharpe: {best_net[1]['sharpe_net']:.3f})
+                    
+                    {"⚠️ **Winner changed!** The best theoretical strategy is NOT the best after costs." if winner_changed else "✅ **Consistent winner.** The best strategy remains the same after costs."}
+                    
+                    ---
+                    
+                    ### 🔄 Turnover Impact
+                    
+                    | Strategy | Turnover | Annual Cost | Trades/Year |
+                    |----------|----------|-------------|-------------|
+                    | {highest_turnover[1]['name']} (Highest) | {highest_turnover[1]['total_turnover']*100:.0f}% | {highest_turnover[1]['cost_drag']*100:.2f}% | {highest_turnover[1]['n_rebalances']} |
+                    | {lowest_turnover[1]['name']} (Lowest) | {lowest_turnover[1]['total_turnover']*100:.0f}% | {lowest_turnover[1]['cost_drag']*100:.2f}% | {lowest_turnover[1]['n_rebalances']} |
+                    
+                    ---
+                    
+                    ### 💡 Recommendations
+                    
+                    1. **If minimizing costs is priority:** Consider **{lowest_turnover[1]['name']}** - lowest turnover and cost drag
+                    
+                    2. **If maximizing risk-adjusted returns:** Consider **{best_net[1]['name']}** - best Sharpe after costs
+                    
+                    3. **Cost-conscious tip:** At {config['bps']} bps/trade, switching from {highest_turnover[1]['name']} to {lowest_turnover[1]['name']} 
+                       saves approximately **{(highest_turnover[1]['cost_drag'] - lowest_turnover[1]['cost_drag'])*100:.2f}%** annually
+                    
+                    4. **Rebalancing frequency:** {"Consider less frequent rebalancing to reduce costs" if config['rebal_freq'] in ['D', 'W'] else "Current rebalancing frequency seems reasonable"}
+                    """)
+                
+            else:
+                st.warning("""
+                ⚠️ **Cost analysis not available.** 
+                
+                Enable transaction costs in the sidebar to see how real-world friction affects your portfolios.
+                
+                **To enable:**
+                1. Check "Enable transaction costs" in the sidebar
+                2. Set your cost per trade (bps)
+                3. Choose a rebalancing strategy
+                4. Re-run the analysis
+                """)
+            
+            st.markdown("---")
+            
+            # ============================================================
+            # SECTION 4: SEASONALITY ANALYSIS
+            # ============================================================
+            st.markdown("""
+            ## 📅 Seasonality Analysis
+            
+            Does this portfolio perform better in certain months? This analysis helps identify **seasonal patterns** 
+            that may (or may not) repeat in the future.
+            
+            **Use cases:**
+            - Understand historical performance patterns
+            - Identify potentially weak/strong periods
+            - Set realistic expectations for different times of year
+            """)
             
             # Settings
             col1, col2 = st.columns(2)
             with col1:
-                # Get available years
                 portfolio_returns = analyzer.portfolios[selected_p]['returns']
                 available_years = sorted(portfolio_returns.index.year.unique(), reverse=True)
                 
@@ -1471,18 +1664,15 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     key="seasonality_specific_years"
                 )
             
-            # Determine which years to use
             if selected_years:
                 years_to_analyze = sorted(selected_years)
             else:
                 years_to_analyze = available_years[:n_years_display]
             
-            # Filter returns for selected years
             mask = portfolio_returns.index.year.isin(years_to_analyze)
             filtered_returns = portfolio_returns[mask]
             
             if len(filtered_returns) > 20:
-                # Create DataFrame with Year and Month
                 seasonality_df = pd.DataFrame({
                     'Return': filtered_returns.values,
                     'Date': filtered_returns.index,
@@ -1490,8 +1680,9 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     'Month': filtered_returns.index.month
                 })
                 
-                # ---- CHART 1: Cumulative Performance by Year (Base 100) ----
+                # Year-over-Year Performance
                 st.markdown("#### 📈 Year-over-Year Performance (Base 100)")
+                st.caption("Compare how the portfolio evolved throughout each year. Current year highlighted in yellow.")
                 
                 fig_yearly = go.Figure()
                 
@@ -1504,22 +1695,16 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 for i, year in enumerate(sorted_years):
                     year_data = seasonality_df[seasonality_df['Year'] == year].copy()
                     if len(year_data) > 0:
-                        # Calculate cumulative return starting at 100
                         year_data = year_data.sort_values('Date')
                         year_data['Cumulative'] = (1 + year_data['Return']).cumprod() * 100
-                        
-                        # Create day-of-year index for alignment
                         year_data['DayOfYear'] = year_data['Date'].dt.dayofyear
                         
-                        # Style based on current year vs past years
                         is_current_year = (year == current_year)
                         
                         if is_current_year:
-                            # Current year: bold, bright color
                             line_style = dict(color='#FFE66D', width=4)
                             opacity = 1.0
                         else:
-                            # Past years: thinner, more transparent
                             color_idx = (i if year != current_year else i + 1) % len(CHART_COLORS)
                             line_style = dict(color=CHART_COLORS[color_idx], width=1.5)
                             opacity = 0.5
@@ -1534,49 +1719,32 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             hovertemplate=f'<b>{year}</b><br>Day: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>'
                         ))
                         
-                        # Add pulsing marker for current year's last data point
                         if is_current_year and len(year_data) > 0:
                             last_point = year_data.iloc[-1]
                             
-                            # Outer glow ring (larger, semi-transparent)
                             fig_yearly.add_trace(go.Scatter(
                                 x=[last_point['DayOfYear']],
                                 y=[last_point['Cumulative']],
                                 mode='markers',
-                                marker=dict(
-                                    size=20,
-                                    color='rgba(255, 230, 109, 0.3)',
-                                    line=dict(width=0)
-                                ),
+                                marker=dict(size=20, color='rgba(255, 230, 109, 0.3)', line=dict(width=0)),
                                 showlegend=False,
                                 hoverinfo='skip'
                             ))
                             
-                            # Middle ring
                             fig_yearly.add_trace(go.Scatter(
                                 x=[last_point['DayOfYear']],
                                 y=[last_point['Cumulative']],
                                 mode='markers',
-                                marker=dict(
-                                    size=14,
-                                    color='rgba(255, 230, 109, 0.5)',
-                                    line=dict(width=0)
-                                ),
+                                marker=dict(size=14, color='rgba(255, 230, 109, 0.5)', line=dict(width=0)),
                                 showlegend=False,
                                 hoverinfo='skip'
                             ))
                             
-                            # Inner solid dot
                             fig_yearly.add_trace(go.Scatter(
                                 x=[last_point['DayOfYear']],
                                 y=[last_point['Cumulative']],
                                 mode='markers+text',
-                                marker=dict(
-                                    size=10,
-                                    color='#FFE66D',
-                                    line=dict(width=2, color='white'),
-                                    symbol='circle'
-                                ),
+                                marker=dict(size=10, color='#FFE66D', line=dict(width=2, color='white'), symbol='circle'),
                                 text=[f"{last_point['Cumulative']:.1f}"],
                                 textposition='top right',
                                 textfont=dict(color='#FFE66D', size=11, family='Inter'),
@@ -1584,33 +1752,19 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                                 hovertemplate=f'<b>📍 LATEST ({current_year})</b><br>Day: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>'
                             ))
                 
-                # Add month labels on x-axis
                 month_starts = [1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335]
                 
                 fig_yearly.update_layout(
                     height=500,
-                    xaxis=dict(
-                        tickmode='array',
-                        tickvals=month_starts,
-                        ticktext=month_names,
-                        title="Month"
-                    ),
+                    xaxis=dict(tickmode='array', tickvals=month_starts, ticktext=month_names, title="Month"),
                     yaxis_title="Cumulative Value (Base 100)",
                     hovermode='x unified',
-                    legend=dict(
-                        orientation="h", 
-                        yanchor="bottom", 
-                        y=1.02, 
-                        xanchor="center", 
-                        x=0.5,
-                        font=dict(size=10)
-                    )
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5, font=dict(size=10))
                 )
                 fig_yearly.add_hline(y=100, line_dash="dash", line_color="rgba(255,255,255,0.3)")
                 fig_yearly = apply_plotly_theme(fig_yearly)
                 st.plotly_chart(fig_yearly, use_container_width=True)
                 
-                # Current year callout
                 if current_year in years_to_analyze:
                     current_year_data = seasonality_df[seasonality_df['Year'] == current_year]
                     if len(current_year_data) > 0:
@@ -1622,51 +1776,42 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         else:
                             st.error(f"📍 **{current_year} YTD**: {ytd_return:+.2f}% (as of {last_date})")
                 
-                # ---- TABLE: Monthly Returns by Year ----
+                # Monthly Returns Table
                 st.markdown("#### 📊 Monthly Returns Table (%)")
                 
-                # Calculate average daily return per month/year, then approximate monthly return
                 monthly_stats = seasonality_df.groupby(['Year', 'Month']).agg(
                     avg_daily_return=('Return', 'mean'),
                     trading_days=('Return', 'count')
                 ).reset_index()
                 
-                # Approximate monthly return: (1 + avg_daily)^trading_days - 1
                 monthly_stats['Monthly_Return'] = ((1 + monthly_stats['avg_daily_return']) ** monthly_stats['trading_days'] - 1) * 100
                 
-                # Pivot table
                 monthly_pivot = monthly_stats.pivot(index='Month', columns='Year', values='Monthly_Return')
                 
-                # Add month names
                 month_name_map = {1: 'January', 2: 'February', 3: 'March', 4: 'April', 
                                  5: 'May', 6: 'June', 7: 'July', 8: 'August',
                                  9: 'September', 10: 'October', 11: 'November', 12: 'December'}
                 monthly_pivot.index = monthly_pivot.index.map(month_name_map)
                 
-                # Calculate row averages and add as column
                 monthly_pivot['Average'] = monthly_pivot.mean(axis=1)
                 
-                # Format values
                 monthly_pivot_display = monthly_pivot.copy()
                 for col in monthly_pivot_display.columns:
                     monthly_pivot_display[col] = monthly_pivot_display[col].apply(
                         lambda x: f"{x:+.2f}%" if pd.notna(x) else "—"
                     )
                 
-                # Reset index for display
                 monthly_pivot_display = monthly_pivot_display.reset_index()
                 monthly_pivot_display.columns = ['Month'] + [str(c) for c in monthly_pivot_display.columns[1:]]
                 
                 st.markdown(create_styled_table(monthly_pivot_display, f"Monthly Returns - {analyzer.portfolios[selected_p]['name']}"), unsafe_allow_html=True)
                 
-                # ---- CHART 2: Average Monthly Performance (Bar Chart) ----
+                # Average Monthly Performance
                 st.markdown("#### 📊 Average Monthly Performance")
                 
-                # Calculate average return per month across all years
                 avg_monthly = monthly_stats.groupby('Month')['Monthly_Return'].mean().reset_index()
                 avg_monthly['Month_Name'] = avg_monthly['Month'].map(month_name_map)
                 
-                # Color based on positive/negative
                 colors = ['#4ECDC4' if x >= 0 else '#FF6B6B' for x in avg_monthly['Monthly_Return']]
                 
                 fig_monthly_avg = go.Figure(data=[go.Bar(
@@ -1689,7 +1834,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 fig_monthly_avg = apply_plotly_theme(fig_monthly_avg)
                 st.plotly_chart(fig_monthly_avg, use_container_width=True)
                 
-                # ---- Summary Statistics ----
+                # Summary Statistics
                 col1, col2, col3, col4 = st.columns(4)
                 
                 best_month = avg_monthly.loc[avg_monthly['Monthly_Return'].idxmax()]
@@ -1707,29 +1852,44 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     st.metric("📊 Seasonality Strength", f"{seasonality_strength:.2f}%", 
                              "High" if seasonality_strength > 3 else "Moderate" if seasonality_strength > 1.5 else "Low")
                 
-                # Interpretation
                 with st.expander("📖 How to Interpret Seasonality"):
                     st.markdown("""
-                    **Year-over-Year Chart:**
-                    - Shows how the portfolio performed throughout each year
-                    - Look for consistent patterns (e.g., strong Q4, weak summer months)
-                    - Divergent lines indicate high variability between years
+                    ### Understanding the Charts
+                    
+                    **Year-over-Year Performance:**
+                    - Each line shows the portfolio's journey through one calendar year
+                    - Lines starting above 100 and staying there = positive year
+                    - Consistent patterns across years suggest reliable seasonality
+                    - Divergent lines = high year-to-year variability
                     
                     **Monthly Returns Table:**
-                    - Green/positive values indicate gains, red/negative indicate losses
-                    - The "Average" column shows the typical performance for each month
-                    - Look for months that are consistently positive or negative across years
+                    - Positive values (green) = gains, Negative values (red) = losses
+                    - "Average" column = typical performance for that month
+                    - Consistent colors in a row = reliable seasonal pattern
                     
                     **Average Monthly Performance:**
-                    - Quick visual of which months tend to be best/worst
-                    - Useful for timing decisions (with caution!)
+                    - Visual summary of typical monthly returns
+                    - Large bars = strong seasonal effect
+                    - Mixed positive/negative = weak seasonality
                     
-                    **Seasonality Strength:**
-                    - **High (>3%)**: Strong seasonal patterns - timing may add value
-                    - **Moderate (1.5-3%)**: Some patterns exist but not dominant
-                    - **Low (<1.5%)**: Weak seasonality - timing likely not beneficial
+                    ---
                     
-                    ⚠️ **Caution**: Past seasonality patterns may not persist. Use this analysis as one input among many, not as a trading signal.
+                    ### Seasonality Strength Interpretation
+                    
+                    | Strength | Std Dev | Meaning |
+                    |----------|---------|---------|
+                    | **High** | > 3% | Strong seasonal patterns - timing may add value |
+                    | **Moderate** | 1.5-3% | Some patterns exist but not dominant |
+                    | **Low** | < 1.5% | Weak seasonality - timing unlikely to help |
+                    
+                    ---
+                    
+                    ### ⚠️ Important Caveats
+                    
+                    1. **Past ≠ Future:** Historical patterns may not repeat
+                    2. **Sample size matters:** More years = more reliable patterns
+                    3. **Survivorship bias:** This analysis only includes assets that still exist
+                    4. **Not a trading signal:** Use as context, not as a buy/sell trigger
                     """)
             else:
                 st.warning("⚠️ Not enough data for seasonality analysis. Need at least 20 trading days.")
