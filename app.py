@@ -671,8 +671,7 @@ defaults = {
     'benchmark': '^GSPC', 'use_benchmark': True, 'benchmark_returns': None,
     'run_analysis': False, 'alerts': [], 'yf_search_results': [], 'yf_selected': [],
     # NEW: Transaction costs defaults
-    'transaction_cost_bps': 10, 'rebalance_freq': 'M', 'rebalance_threshold': None,
-    'enable_costs': True, 'portfolios_with_costs': None
+    'portfolios_with_costs': None, 'cost_config': None
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -844,11 +843,7 @@ with st.sidebar:
         rebalance_threshold = None
         st.caption("💡 No rebalancing - weights drift freely based on performance")
     
-    # Store in session state for access during analysis
-    st.session_state.transaction_cost_bps = transaction_cost_bps
-    st.session_state.rebalance_freq = rebalance_freq_code
-    st.session_state.rebalance_threshold = rebalance_threshold
-    st.session_state.enable_costs = enable_costs    
+    # Store in session state for access during analysis    
     st.markdown("#### 📊 Benchmark")
     use_benchmark = st.checkbox("Compare with benchmark", value=True, key="use_bench")
     benchmark_options = ["^GSPC", "^DJI", "^IXIC", "SPY", "QQQ", "VTI"]
@@ -998,16 +993,30 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             st.session_state.run_analysis = False
             
             # ============ NEW: Calculate portfolios with costs ============
-            if st.session_state.enable_costs or st.session_state.rebalance_freq or st.session_state.rebalance_threshold:
+            # Get values from widgets (use local variables, not session_state for widget-bound keys)
+            _enable_costs = enable_costs if 'enable_costs' in dir() else st.session_state.get('enable_costs', True)
+            _tx_cost = transaction_cost_bps if 'transaction_cost_bps' in dir() else st.session_state.get('tx_cost', 10)
+            _rebal_freq = rebalance_freq_code if 'rebalance_freq_code' in dir() else None
+            _rebal_thresh = rebalance_threshold if 'rebalance_threshold' in dir() else None
+            
+            if _enable_costs or _rebal_freq or _rebal_thresh:
                 st.session_state.portfolios_with_costs = calculate_all_portfolios_with_costs(
                     analyzer=analyzer,
-                    rebalance_freq=st.session_state.rebalance_freq,
-                    rebalance_threshold=st.session_state.rebalance_threshold,
-                    cost_bps=st.session_state.transaction_cost_bps,
+                    rebalance_freq=_rebal_freq,
+                    rebalance_threshold=_rebal_thresh,
+                    cost_bps=_tx_cost if _enable_costs else 0,
                     rf_rate=risk_free_rate / 100
                 )
+                # Store config for display
+                st.session_state.cost_config = {
+                    'enabled': _enable_costs,
+                    'bps': _tx_cost,
+                    'rebal_freq': _rebal_freq,
+                    'rebal_thresh': _rebal_thresh
+                }
             else:
-                st.session_state.portfolios_with_costs = None            
+                st.session_state.portfolios_with_costs = None
+                st.session_state.cost_config = None            
             if enable_alerts:
                 st.session_state.alerts = []
                 for name, portfolio in analyzer.portfolios.items():
@@ -1183,14 +1192,19 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             st.markdown("#### 📊 Strategy Comparison")
             
             # Check if we have cost-adjusted data
+            # Check if we have cost-adjusted data
             has_costs = st.session_state.portfolios_with_costs is not None
             
-            if has_costs:
-                rebal_desc = st.session_state.rebalance_freq if st.session_state.rebalance_freq else (
-                    f"Threshold {st.session_state.rebalance_threshold*100:.0f}%" if st.session_state.rebalance_threshold else "Buy & Hold"
-                )
-                st.info(f"💰 **Costs enabled**: {st.session_state.transaction_cost_bps} bps per trade | "
-                       f"**Rebalancing**: {rebal_desc}")
+            if has_costs and st.session_state.cost_config:
+                config = st.session_state.cost_config
+                if config['rebal_freq']:
+                    rebal_desc = config['rebal_freq']
+                elif config['rebal_thresh']:
+                    rebal_desc = f"Threshold {config['rebal_thresh']*100:.0f}%"
+                else:
+                    rebal_desc = "Buy & Hold"
+                
+                st.info(f"💰 **Costs enabled**: {config['bps']} bps per trade | **Rebalancing**: {rebal_desc}")
             
             comparison_data = []
             
