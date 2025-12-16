@@ -825,9 +825,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 "🔬 Deep-dive", "🧪 Backtest", "📐 Frontier", "📥 Export"
             ])
             tab9 = None
-# Part 4: Overview and Portfolio Tabs
-
-        # TAB 1: OVERVIEW
+# TAB 1: OVERVIEW
         with tab1:
             st.markdown("### 📊 Overview")
             
@@ -867,6 +865,55 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 st.metric("📅 Days", f"{len(analyzer.data)}")
                 st.metric("📦 Assets", f"{len(symbols)}")
             
+            # ============ NEW: Asset Statistics Table ============
+            st.markdown("#### 📋 Individual Asset Statistics")
+            
+            asset_stats_data = []
+            for ticker in symbols:
+                asset_returns = analyzer.returns[ticker]
+                
+                # Calculate metrics
+                ann_return = asset_returns.mean() * 252
+                ann_vol = asset_returns.std() * np.sqrt(252)
+                sharpe = (ann_return - rf_rate) / ann_vol if ann_vol > 0 else 0
+                
+                # Sortino
+                downside = asset_returns[asset_returns < 0]
+                downside_std = downside.std() * np.sqrt(252) if len(downside) > 0 else ann_vol
+                sortino = (ann_return - rf_rate) / downside_std if downside_std > 0 else 0
+                
+                # Max Drawdown
+                cumulative = (1 + asset_returns).cumprod()
+                rolling_max = cumulative.expanding().max()
+                drawdown = (cumulative - rolling_max) / rolling_max
+                max_dd = drawdown.min()
+                
+                # Calmar
+                calmar = ann_return / abs(max_dd) if max_dd != 0 else 0
+                
+                asset_stats_data.append({
+                    'Asset': get_display_name(ticker),
+                    'Ticker': ticker,
+                    'Return': f"{ann_return*100:.2f}%",
+                    'Vol': f"{ann_vol*100:.2f}%",
+                    'Sharpe': f"{sharpe:.3f}",
+                    'Sortino': f"{sortino:.3f}",
+                    'Max DD': f"{max_dd*100:.2f}%",
+                    'Calmar': f"{calmar:.3f}"
+                })
+            
+            # Sort by Sharpe ratio (numeric extraction for sorting)
+            asset_stats_df = pd.DataFrame(asset_stats_data)
+            asset_stats_df['Sharpe_num'] = asset_stats_df['Sharpe'].astype(float)
+            asset_stats_df = asset_stats_df.sort_values('Sharpe_num', ascending=False).drop('Sharpe_num', axis=1)
+            
+            # Add rank
+            asset_stats_df.insert(0, '#', range(1, len(asset_stats_df) + 1))
+            
+            st.markdown(create_styled_table(asset_stats_df, "Ranked by Sharpe Ratio"), unsafe_allow_html=True)
+            
+            st.markdown("---")
+            
             # Correlation
             st.markdown("#### 🔥 Correlation Heatmap")
             corr_matrix = analyzer.returns.corr()
@@ -879,7 +926,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             fig = apply_plotly_theme(fig)
             st.plotly_chart(fig, use_container_width=True)
         
-        # TAB 2: PORTFOLIOS
+# TAB 2: PORTFOLIOS
         with tab2:
             st.markdown("### 💼 Portfolio Analysis")
             
@@ -973,7 +1020,211 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     annotations=[dict(text=portfolio['name'].split()[0], x=0.5, y=0.5, font_size=11, font_color='#E2E8F0', showarrow=False)])
                 fig = apply_plotly_theme(fig)
                 st.plotly_chart(fig, use_container_width=True)
-# Part 5: Performance, Rolling, and Deep-dive Statistics Tabs
+            
+            # ============ NEW: SEASONALITY ANALYSIS ============
+            st.markdown("---")
+            st.markdown("## 📅 Seasonality Analysis")
+            st.markdown("Analyze how the selected portfolio performs across different months and years to identify seasonal patterns.")
+            
+            # Settings
+            col1, col2 = st.columns(2)
+            with col1:
+                # Get available years
+                portfolio_returns = analyzer.portfolios[selected_p]['returns']
+                available_years = sorted(portfolio_returns.index.year.unique(), reverse=True)
+                
+                n_years_display = st.slider(
+                    "Number of years to display",
+                    min_value=1,
+                    max_value=min(len(available_years), 15),
+                    value=min(5, len(available_years)),
+                    key="seasonality_years"
+                )
+            
+            with col2:
+                selected_years = st.multiselect(
+                    "Or select specific years",
+                    options=available_years,
+                    default=None,
+                    key="seasonality_specific_years"
+                )
+            
+            # Determine which years to use
+            if selected_years:
+                years_to_analyze = sorted(selected_years)
+            else:
+                years_to_analyze = available_years[:n_years_display]
+            
+            # Filter returns for selected years
+            mask = portfolio_returns.index.year.isin(years_to_analyze)
+            filtered_returns = portfolio_returns[mask]
+            
+            if len(filtered_returns) > 20:
+                # Create DataFrame with Year and Month
+                seasonality_df = pd.DataFrame({
+                    'Return': filtered_returns.values,
+                    'Date': filtered_returns.index,
+                    'Year': filtered_returns.index.year,
+                    'Month': filtered_returns.index.month
+                })
+                
+                # ---- CHART 1: Cumulative Performance by Year (Base 100) ----
+                st.markdown("#### 📈 Year-over-Year Performance (Base 100)")
+                
+                fig_yearly = go.Figure()
+                
+                month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                              'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+                
+                for i, year in enumerate(sorted(years_to_analyze, reverse=True)):
+                    year_data = seasonality_df[seasonality_df['Year'] == year].copy()
+                    if len(year_data) > 0:
+                        # Calculate cumulative return starting at 100
+                        year_data = year_data.sort_values('Date')
+                        year_data['Cumulative'] = (1 + year_data['Return']).cumprod() * 100
+                        
+                        # Create day-of-year index for alignment
+                        year_data['DayOfYear'] = year_data['Date'].dt.dayofyear
+                        
+                        fig_yearly.add_trace(go.Scatter(
+                            x=year_data['DayOfYear'],
+                            y=year_data['Cumulative'],
+                            name=str(year),
+                            mode='lines',
+                            line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2),
+                            hovertemplate=f'<b>{year}</b><br>Day: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>'
+                        ))
+                
+                # Add month labels on x-axis
+                month_starts = [1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335]
+                
+                fig_yearly.update_layout(
+                    height=450,
+                    xaxis=dict(
+                        tickmode='array',
+                        tickvals=month_starts,
+                        ticktext=month_names,
+                        title="Month"
+                    ),
+                    yaxis_title="Cumulative Value (Base 100)",
+                    hovermode='x unified',
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                )
+                fig_yearly.add_hline(y=100, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+                fig_yearly = apply_plotly_theme(fig_yearly)
+                st.plotly_chart(fig_yearly, use_container_width=True)
+                
+                # ---- TABLE: Monthly Returns by Year ----
+                st.markdown("#### 📊 Monthly Returns Table (%)")
+                
+                # Calculate average daily return per month/year, then approximate monthly return
+                monthly_stats = seasonality_df.groupby(['Year', 'Month']).agg(
+                    avg_daily_return=('Return', 'mean'),
+                    trading_days=('Return', 'count')
+                ).reset_index()
+                
+                # Approximate monthly return: (1 + avg_daily)^trading_days - 1
+                monthly_stats['Monthly_Return'] = ((1 + monthly_stats['avg_daily_return']) ** monthly_stats['trading_days'] - 1) * 100
+                
+                # Pivot table
+                monthly_pivot = monthly_stats.pivot(index='Month', columns='Year', values='Monthly_Return')
+                
+                # Add month names
+                month_name_map = {1: 'January', 2: 'February', 3: 'March', 4: 'April', 
+                                 5: 'May', 6: 'June', 7: 'July', 8: 'August',
+                                 9: 'September', 10: 'October', 11: 'November', 12: 'December'}
+                monthly_pivot.index = monthly_pivot.index.map(month_name_map)
+                
+                # Calculate row averages and add as column
+                monthly_pivot['Average'] = monthly_pivot.mean(axis=1)
+                
+                # Format values
+                monthly_pivot_display = monthly_pivot.copy()
+                for col in monthly_pivot_display.columns:
+                    monthly_pivot_display[col] = monthly_pivot_display[col].apply(
+                        lambda x: f"{x:+.2f}%" if pd.notna(x) else "—"
+                    )
+                
+                # Reset index for display
+                monthly_pivot_display = monthly_pivot_display.reset_index()
+                monthly_pivot_display.columns = ['Month'] + [str(c) for c in monthly_pivot_display.columns[1:]]
+                
+                st.markdown(create_styled_table(monthly_pivot_display, f"Monthly Returns - {analyzer.portfolios[selected_p]['name']}"), unsafe_allow_html=True)
+                
+                # ---- CHART 2: Average Monthly Performance (Bar Chart) ----
+                st.markdown("#### 📊 Average Monthly Performance")
+                
+                # Calculate average return per month across all years
+                avg_monthly = monthly_stats.groupby('Month')['Monthly_Return'].mean().reset_index()
+                avg_monthly['Month_Name'] = avg_monthly['Month'].map(month_name_map)
+                
+                # Color based on positive/negative
+                colors = ['#4ECDC4' if x >= 0 else '#FF6B6B' for x in avg_monthly['Monthly_Return']]
+                
+                fig_monthly_avg = go.Figure(data=[go.Bar(
+                    x=avg_monthly['Month_Name'],
+                    y=avg_monthly['Monthly_Return'],
+                    marker_color=colors,
+                    text=[f"{x:+.2f}%" for x in avg_monthly['Monthly_Return']],
+                    textposition='outside',
+                    textfont=dict(color='#E2E8F0', size=10),
+                    hovertemplate='<b>%{x}</b><br>Avg Return: %{y:.2f}%<extra></extra>'
+                )])
+                
+                fig_monthly_avg.update_layout(
+                    height=350,
+                    xaxis_title="Month",
+                    yaxis_title="Average Monthly Return (%)",
+                    xaxis_tickangle=-45
+                )
+                fig_monthly_avg.add_hline(y=0, line_color="rgba(255,255,255,0.5)")
+                fig_monthly_avg = apply_plotly_theme(fig_monthly_avg)
+                st.plotly_chart(fig_monthly_avg, use_container_width=True)
+                
+                # ---- Summary Statistics ----
+                col1, col2, col3, col4 = st.columns(4)
+                
+                best_month = avg_monthly.loc[avg_monthly['Monthly_Return'].idxmax()]
+                worst_month = avg_monthly.loc[avg_monthly['Monthly_Return'].idxmin()]
+                
+                with col1:
+                    st.metric("🏆 Best Month", best_month['Month_Name'], f"{best_month['Monthly_Return']:+.2f}%")
+                with col2:
+                    st.metric("📉 Worst Month", worst_month['Month_Name'], f"{worst_month['Monthly_Return']:+.2f}%")
+                with col3:
+                    positive_months = (avg_monthly['Monthly_Return'] > 0).sum()
+                    st.metric("✅ Positive Months", f"{positive_months}/12")
+                with col4:
+                    seasonality_strength = avg_monthly['Monthly_Return'].std()
+                    st.metric("📊 Seasonality Strength", f"{seasonality_strength:.2f}%", 
+                             "High" if seasonality_strength > 3 else "Moderate" if seasonality_strength > 1.5 else "Low")
+                
+                # Interpretation
+                with st.expander("📖 How to Interpret Seasonality"):
+                    st.markdown("""
+                    **Year-over-Year Chart:**
+                    - Shows how the portfolio performed throughout each year
+                    - Look for consistent patterns (e.g., strong Q4, weak summer months)
+                    - Divergent lines indicate high variability between years
+                    
+                    **Monthly Returns Table:**
+                    - Green/positive values indicate gains, red/negative indicate losses
+                    - The "Average" column shows the typical performance for each month
+                    - Look for months that are consistently positive or negative across years
+                    
+                    **Average Monthly Performance:**
+                    - Quick visual of which months tend to be best/worst
+                    - Useful for timing decisions (with caution!)
+                    
+                    **Seasonality Strength:**
+                    - **High (>3%)**: Strong seasonal patterns - timing may add value
+                    - **Moderate (1.5-3%)**: Some patterns exist but not dominant
+                    - **Low (<1.5%)**: Weak seasonality - timing likely not beneficial
+                    
+                    ⚠️ **Caution**: Past seasonality patterns may not persist. Use this analysis as one input among many, not as a trading signal.
+                    """)
+            else:
+                st.warning("⚠️ Not enough data for seasonality analysis. Need at least 20 trading days.")# Part 5: Performance, Rolling, and Deep-dive Statistics Tabs
 
         # TAB 3: PERFORMANCE
         with tab3:
