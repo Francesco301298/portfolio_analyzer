@@ -505,30 +505,23 @@ def calculate_portfolio_with_rebalancing(
 ):
     """
     Calculate portfolio returns with rebalancing and transaction costs.
-    
-    Args:
-        returns_df: DataFrame of asset returns
-        weights_target: Target portfolio weights (array)
-        rebalance_freq: 'D', 'W', 'M', 'Q', 'A' or None
-        rebalance_threshold: Float (e.g., 0.05 for 5%) or None
-        cost_bps: Transaction cost in basis points
-        rf_rate: Risk-free rate (annualized)
-    
-    Returns:
-        dict with performance metrics and cost analysis
+    Now also tracks weight evolution over time for visualization.
     """
     weights_target = np.array(weights_target)
     weights_current = weights_target.copy()
+    n_assets = len(weights_target)
     
     portfolio_returns_gross = []
     portfolio_returns_net = []
     turnover_history = []
     rebalance_dates = []
-    weights_history = []
+    
+    # NEW: Track weights and drift over time
+    weights_history = []  # List of dicts with date and weights
+    drift_history = []    # List of dicts with date and max drift
     
     # Build rebalance schedule if calendar-based
     if rebalance_freq:
-        # Get last day of each period
         rebalance_schedule = set(returns_df.resample(rebalance_freq).last().index)
     else:
         rebalance_schedule = set()
@@ -546,12 +539,26 @@ def calculate_portfolio_with_rebalancing(
         else:
             weights_drifted = weights_target.copy()
         
+        # Calculate current drift
+        current_drift = np.max(np.abs(weights_drifted - weights_target))
+        
+        # Save weights and drift BEFORE potential rebalancing
+        weights_history.append({
+            'date': date,
+            'weights': weights_drifted.copy(),
+            'max_drift': current_drift,
+            'rebalanced': False  # Will update if rebalancing happens
+        })
+        drift_history.append({
+            'date': date,
+            'max_drift': current_drift
+        })
+        
         # 3. Check if rebalancing needed
         needs_rebalance = False
         
         if rebalance_threshold is not None:
-            max_drift = np.max(np.abs(weights_drifted - weights_target))
-            if max_drift > rebalance_threshold:
+            if current_drift > rebalance_threshold:
                 needs_rebalance = True
         elif rebalance_freq and date in rebalance_schedule:
             needs_rebalance = True
@@ -565,16 +572,27 @@ def calculate_portfolio_with_rebalancing(
             weights_current = weights_target.copy()
             turnover_history.append(turnover)
             rebalance_dates.append(date)
+            
+            # Mark this point as rebalanced
+            weights_history[-1]['rebalanced'] = True
+            weights_history[-1]['weights'] = weights_target.copy()  # After rebalancing
         else:
             port_return_net = port_return_gross
             weights_current = weights_drifted.copy()
         
         portfolio_returns_net.append(port_return_net)
-        weights_history.append(weights_current.copy())
     
-    # Convert to Series
+    # Convert to Series/DataFrames
     returns_gross = pd.Series(portfolio_returns_gross, index=returns_df.index)
     returns_net = pd.Series(portfolio_returns_net, index=returns_df.index)
+    
+    # Create weights DataFrame for easy plotting
+    weights_df = pd.DataFrame([
+        {**{'date': w['date'], 'max_drift': w['max_drift'], 'rebalanced': w['rebalanced']}, 
+         **{f'weight_{i}': w['weights'][i] for i in range(n_assets)}}
+        for w in weights_history
+    ])
+    weights_df.set_index('date', inplace=True)
     
     # Calculate metrics for GROSS returns
     ann_return_gross = returns_gross.mean() * 252
@@ -634,7 +652,10 @@ def calculate_portfolio_with_rebalancing(
         'avg_turnover': avg_turnover,
         'cost_drag': cost_drag,
         'rebalance_dates': rebalance_dates,
-        'weights_history': weights_history
+        
+        # NEW: Weight tracking
+        'weights_history': weights_df,
+        'weights_target': weights_target
     }
 
 
@@ -1568,7 +1589,284 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     st.plotly_chart(fig_efficiency, use_container_width=True)
                 
                 st.caption("**Left:** Which strategies trade more. **Right:** Cost efficiency - ideally you want high Sharpe with low turnover (top-left corner).")
+                # ============ WEIGHT EVOLUTION VISUALIZATION ============
+                st.markdown("---")
+                st.markdown("#### 📊 Weight Evolution & Rebalancing Events")
+                st.markdown("""
+                This visualization shows how portfolio weights **drift over time** due to market movements, 
+                and when **rebalancing events** bring them back to target.
+                """)
                 
+                # Select which portfolio to visualize
+                weight_viz_portfolio = st.selectbox(
+                    "Select strategy to visualize",
+                    options=list(portfolios_data.keys()),
+                    format_func=lambda x: portfolios_data[x]['name'],
+                    key="weight_viz_select"
+                )
+                
+                p_data = portfolios_data[weight_viz_portfolio]
+                weights_hist = p_data['weights_history']
+                weights_target = p_data['weights_target']
+                rebalance_dates = p_data['rebalance_dates']
+                
+                # Get asset names
+                asset_names = [get_display_name(t) for t in symbols]
+                
+                # Find assets with non-zero target weight
+                significant_assets = [(i, name) for i, (name, w) in enumerate(zip(asset_names, weights_target)) if w > 0.01]
+                
+                if len(significant_assets) > 0:
+                    
+                    # Create tabs for different visualizations
+                    viz_tab1, viz_tab2, viz_tab3 = st.tabs(["📈 Weight Drift", "🎯 Drift from Target", "📋 Rebalancing Log"])
+                    
+                    with viz_tab1:
+                        st.markdown("##### Actual Weights Over Time")
+                        st.caption("Solid lines = actual weights | Dashed lines = target weights | 🔴 = rebalancing event")
+                        
+                        fig_weights = go.Figure()
+                        
+                        # Plot actual weights for each significant asset
+                        for idx, (asset_idx, asset_name) in enumerate(significant_assets):
+                            col_name = f'weight_{asset_idx}'
+                            color = CHART_COLORS[idx % len(CHART_COLORS)]
+                            
+                            # Actual weight line
+                            fig_weights.add_trace(go.Scatter(
+                                x=weights_hist.index,
+                                y=weights_hist[col_name] * 100,
+                                name=f"{asset_name}",
+                                mode='lines',
+                                line=dict(color=color, width=2),
+                                hovertemplate=f'<b>{asset_name}</b><br>Date: %{{x}}<br>Weight: %{{y:.2f}}%<extra></extra>'
+                            ))
+                            
+                            # Target weight line (dashed)
+                            fig_weights.add_trace(go.Scatter(
+                                x=[weights_hist.index[0], weights_hist.index[-1]],
+                                y=[weights_target[asset_idx] * 100, weights_target[asset_idx] * 100],
+                                name=f"{asset_name} Target",
+                                mode='lines',
+                                line=dict(color=color, width=1, dash='dash'),
+                                opacity=0.5,
+                                showlegend=False,
+                                hoverinfo='skip'
+                            ))
+                        
+                        # Add rebalancing markers
+                        if len(rebalance_dates) > 0:
+                            # Get y-position for markers (middle of chart)
+                            y_pos = 50  # Middle of 0-100 scale
+                            
+                            fig_weights.add_trace(go.Scatter(
+                                x=rebalance_dates,
+                                y=[y_pos] * len(rebalance_dates),
+                                mode='markers',
+                                name='Rebalancing',
+                                marker=dict(
+                                    symbol='line-ns',
+                                    size=15,
+                                    color='rgba(255, 107, 107, 0.8)',
+                                    line=dict(width=2, color='#FF6B6B')
+                                ),
+                                hovertemplate='<b>🔄 Rebalancing</b><br>Date: %{x}<extra></extra>'
+                            ))
+                        
+                        fig_weights.update_layout(
+                            height=450,
+                            xaxis_title="Date",
+                            yaxis_title="Weight (%)",
+                            yaxis=dict(range=[0, max(weights_target) * 150]),  # Some headroom
+                            hovermode='x unified',
+                            legend=dict(
+                                orientation="h",
+                                yanchor="bottom",
+                                y=1.02,
+                                xanchor="center",
+                                x=0.5,
+                                font=dict(size=9)
+                            )
+                        )
+                        fig_weights = apply_plotly_theme(fig_weights)
+                        st.plotly_chart(fig_weights, use_container_width=True)
+                    
+                    with viz_tab2:
+                        st.markdown("##### Drift from Target Weights")
+                        
+                        # Show threshold if using threshold-based
+                        config = st.session_state.cost_config
+                        threshold_pct = config['rebal_thresh'] * 100 if config['rebal_thresh'] else None
+                        
+                        if threshold_pct:
+                            st.caption(f"Red dashed line = rebalancing threshold ({threshold_pct:.0f}%) | Spikes above threshold trigger rebalancing")
+                        else:
+                            st.caption("Vertical red lines = calendar-based rebalancing dates")
+                        
+                        fig_drift = go.Figure()
+                        
+                        # Max drift line
+                        fig_drift.add_trace(go.Scatter(
+                            x=weights_hist.index,
+                            y=weights_hist['max_drift'] * 100,
+                            name='Max Drift',
+                            mode='lines',
+                            fill='tozeroy',
+                            line=dict(color='#6366F1', width=2),
+                            fillcolor='rgba(99, 102, 241, 0.3)',
+                            hovertemplate='<b>Max Drift</b><br>Date: %{x}<br>Drift: %{y:.2f}%<extra></extra>'
+                        ))
+                        
+                        # Threshold line (if threshold-based)
+                        if threshold_pct:
+                            fig_drift.add_hline(
+                                y=threshold_pct,
+                                line_dash="dash",
+                                line_color="#FF6B6B",
+                                annotation_text=f"Threshold ({threshold_pct:.0f}%)",
+                                annotation_position="right"
+                            )
+                        
+                        # Rebalancing markers
+                        if len(rebalance_dates) > 0:
+                            rebal_drifts = weights_hist.loc[weights_hist.index.isin(rebalance_dates), 'max_drift'] * 100
+                            
+                            fig_drift.add_trace(go.Scatter(
+                                x=rebal_drifts.index,
+                                y=rebal_drifts.values,
+                                mode='markers',
+                                name='Rebalancing Event',
+                                marker=dict(
+                                    size=10,
+                                    color='#FF6B6B',
+                                    symbol='circle',
+                                    line=dict(width=2, color='white')
+                                ),
+                                hovertemplate='<b>🔄 Rebalanced!</b><br>Date: %{x}<br>Drift was: %{y:.2f}%<extra></extra>'
+                            ))
+                        
+                        fig_drift.update_layout(
+                            height=350,
+                            xaxis_title="Date",
+                            yaxis_title="Max Drift from Target (%)",
+                            hovermode='x unified',
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                        )
+                        fig_drift = apply_plotly_theme(fig_drift)
+                        st.plotly_chart(fig_drift, use_container_width=True)
+                        
+                        # Drift statistics
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Avg Drift", f"{weights_hist['max_drift'].mean()*100:.2f}%")
+                        with col2:
+                            st.metric("Max Drift", f"{weights_hist['max_drift'].max()*100:.2f}%")
+                        with col3:
+                            st.metric("Min Drift", f"{weights_hist['max_drift'].min()*100:.2f}%")
+                        with col4:
+                            pct_above_5 = (weights_hist['max_drift'] > 0.05).mean() * 100
+                            st.metric("Days > 5% Drift", f"{pct_above_5:.1f}%")
+                    
+                    with viz_tab3:
+                        st.markdown("##### Rebalancing Event Log")
+                        
+                        if len(rebalance_dates) > 0:
+                            # Create rebalancing log
+                            rebal_log = []
+                            
+                            for i, date in enumerate(rebalance_dates):
+                                # Get drift at that date
+                                if date in weights_hist.index:
+                                    drift_at_rebal = weights_hist.loc[date, 'max_drift'] * 100
+                                else:
+                                    drift_at_rebal = None
+                                
+                                # Calculate days since last rebalance
+                                if i > 0:
+                                    days_since_last = (date - rebalance_dates[i-1]).days
+                                else:
+                                    days_since_last = (date - weights_hist.index[0]).days
+                                
+                                rebal_log.append({
+                                    '#': i + 1,
+                                    'Date': date.strftime('%Y-%m-%d'),
+                                    'Drift at Rebal': f"{drift_at_rebal:.2f}%" if drift_at_rebal else "N/A",
+                                    'Days Since Last': days_since_last,
+                                    'Trigger': 'Threshold' if config['rebal_thresh'] else config['rebal_freq']
+                                })
+                            
+                            rebal_df = pd.DataFrame(rebal_log)
+                            st.markdown(create_styled_table(rebal_df, f"Rebalancing Events ({len(rebalance_dates)} total)"), unsafe_allow_html=True)
+                            
+                            # Summary stats
+                            avg_days_between = np.mean([r['Days Since Last'] for r in rebal_log])
+                            
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Total Rebalances", len(rebalance_dates))
+                            with col2:
+                                st.metric("Avg Days Between", f"{avg_days_between:.0f}")
+                            with col3:
+                                years = (weights_hist.index[-1] - weights_hist.index[0]).days / 365
+                                st.metric("Rebalances/Year", f"{len(rebalance_dates)/years:.1f}" if years > 0 else "N/A")
+                        
+                        else:
+                            st.info("🔄 No rebalancing events occurred. This can happen with Buy & Hold strategy or if drift never exceeded threshold.")
+                    
+                    # Explanation expander
+                    with st.expander("📖 Understanding Weight Drift"):
+                        st.markdown("""
+                        ### What is Weight Drift?
+                        
+                        When you build a portfolio with target weights (e.g., 50% AAPL, 50% MSFT), those weights 
+                        **change over time** as assets perform differently.
+                        
+                        **Example:**
+                        - Day 1: 50% AAPL ($100), 50% MSFT ($100) → Total $200
+                        - Day 30: AAPL +20%, MSFT +5%
+                        - New values: AAPL $120, MSFT $105 → Total $225
+                        - New weights: AAPL 53.3%, MSFT 46.7%
+                        - **Drift: 3.3%** (AAPL drifted from 50% to 53.3%)
+                        
+                        ---
+                        
+                        ### Why Rebalancing Matters
+                        
+                        | Without Rebalancing | With Rebalancing |
+                        |---------------------|------------------|
+                        | Winners grow larger | Maintain target allocation |
+                        | Risk profile changes | Consistent risk exposure |
+                        | "Let winners run" | "Buy low, sell high" |
+                        | Zero transaction costs | Costs from trading |
+                        
+                        ---
+                        
+                        ### Reading the Charts
+                        
+                        **Weight Drift Chart:**
+                        - Solid lines show actual weights over time
+                        - Dashed lines show target weights
+                        - Red markers show when rebalancing occurred
+                        - After rebalancing, weights snap back to targets
+                        
+                        **Drift from Target Chart:**
+                        - Shows the maximum deviation of any asset from its target
+                        - Spikes indicate large market movements
+                        - Red dots mark rebalancing events
+                        - With threshold-based: rebalancing happens when drift exceeds the line
+                        
+                        ---
+                        
+                        ### Strategy Insights
+                        
+                        - **High drift strategies** (Max Sharpe, Max Return): Concentrated positions drift faster
+                        - **Low drift strategies** (Equal Weight, Risk Parity): Diversified positions are more stable
+                        - **Frequent rebalancing**: More trades, more costs, tighter tracking
+                        - **Infrequent rebalancing**: Fewer costs, but portfolio drifts from intended strategy
+                        """)
+                
+                else:
+                    st.warning("⚠️ No significant asset weights to display for this portfolio.")                
                 # Insights expander
                 with st.expander("💡 Key Insights & Recommendations"):
                     # Find winner/loser
