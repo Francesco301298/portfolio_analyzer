@@ -679,9 +679,9 @@ def calculate_all_portfolios_with_costs(analyzer, rebalance_freq, rebalance_thre
         
         # Merge with original portfolio data
         results[key] = {
-            **portfolio,  # Original data
-            **enhanced,   # Enhanced with costs
-            'name': portfolio['name']
+            'name': portfolio['name'],
+            'weights': portfolio['weights'],  # Original weights array
+            **enhanced  # Enhanced metrics including weights_target, weights_history, etc.
         }
     
     return results
