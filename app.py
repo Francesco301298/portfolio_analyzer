@@ -1307,9 +1307,12 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 st.plotly_chart(fig_cost, use_container_width=True)
                 
                 # Insight box
+                # Insight box
                 with st.expander("💡 Insights on Transaction Costs"):
                     highest_turnover = max(portfolios_data.items(), key=lambda x: x[1]['total_turnover'])
                     lowest_turnover = min(portfolios_data.items(), key=lambda x: x[1]['total_turnover'])
+                    
+                    cost_bps = st.session_state.cost_config['bps'] if st.session_state.cost_config else 10
                     
                     st.markdown(f"""
                     **Key Findings:**
@@ -1322,13 +1325,12 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     **Why this matters:**
                     - Strategies that rebalance frequently (like Max Sharpe) often have higher turnover
                     - Equal Weight and Risk Parity typically have lower turnover
-                    - At {st.session_state.transaction_cost_bps} bps per trade, the annual cost drag ranges from 
+                    - At {cost_bps} bps per trade, the annual cost drag ranges from 
                       {min(v['cost_drag'] for v in portfolios_data.values())*100:.2f}% to {max(v['cost_drag'] for v in portfolios_data.values())*100:.2f}%
                     
                     **Recommendation:**
                     Consider the **net Sharpe ratio** (after costs) when selecting a strategy, not just gross performance.
-                    """)
-            
+                    """)           
             st.markdown("---")
             
             col1, col2 = st.columns(2)
