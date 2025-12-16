@@ -1076,7 +1076,10 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
                               'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
                 
-                for i, year in enumerate(sorted(years_to_analyze, reverse=True)):
+                current_year = datetime.now().year
+                sorted_years = sorted(years_to_analyze, reverse=True)
+                
+                for i, year in enumerate(sorted_years):
                     year_data = seasonality_df[seasonality_df['Year'] == year].copy()
                     if len(year_data) > 0:
                         # Calculate cumulative return starting at 100
@@ -1086,20 +1089,84 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         # Create day-of-year index for alignment
                         year_data['DayOfYear'] = year_data['Date'].dt.dayofyear
                         
+                        # Style based on current year vs past years
+                        is_current_year = (year == current_year)
+                        
+                        if is_current_year:
+                            # Current year: bold, bright color
+                            line_style = dict(color='#FFE66D', width=4)
+                            opacity = 1.0
+                        else:
+                            # Past years: thinner, more transparent
+                            color_idx = (i if year != current_year else i + 1) % len(CHART_COLORS)
+                            line_style = dict(color=CHART_COLORS[color_idx], width=1.5)
+                            opacity = 0.5
+                        
                         fig_yearly.add_trace(go.Scatter(
                             x=year_data['DayOfYear'],
                             y=year_data['Cumulative'],
                             name=str(year),
                             mode='lines',
-                            line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2),
+                            line=line_style,
+                            opacity=opacity,
                             hovertemplate=f'<b>{year}</b><br>Day: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>'
                         ))
+                        
+                        # Add pulsing marker for current year's last data point
+                        if is_current_year and len(year_data) > 0:
+                            last_point = year_data.iloc[-1]
+                            
+                            # Outer glow ring (larger, semi-transparent)
+                            fig_yearly.add_trace(go.Scatter(
+                                x=[last_point['DayOfYear']],
+                                y=[last_point['Cumulative']],
+                                mode='markers',
+                                marker=dict(
+                                    size=20,
+                                    color='rgba(255, 230, 109, 0.3)',
+                                    line=dict(width=0)
+                                ),
+                                showlegend=False,
+                                hoverinfo='skip'
+                            ))
+                            
+                            # Middle ring
+                            fig_yearly.add_trace(go.Scatter(
+                                x=[last_point['DayOfYear']],
+                                y=[last_point['Cumulative']],
+                                mode='markers',
+                                marker=dict(
+                                    size=14,
+                                    color='rgba(255, 230, 109, 0.5)',
+                                    line=dict(width=0)
+                                ),
+                                showlegend=False,
+                                hoverinfo='skip'
+                            ))
+                            
+                            # Inner solid dot
+                            fig_yearly.add_trace(go.Scatter(
+                                x=[last_point['DayOfYear']],
+                                y=[last_point['Cumulative']],
+                                mode='markers+text',
+                                marker=dict(
+                                    size=10,
+                                    color='#FFE66D',
+                                    line=dict(width=2, color='white'),
+                                    symbol='circle'
+                                ),
+                                text=[f"{last_point['Cumulative']:.1f}"],
+                                textposition='top right',
+                                textfont=dict(color='#FFE66D', size=11, family='Inter'),
+                                showlegend=False,
+                                hovertemplate=f'<b>📍 LATEST ({current_year})</b><br>Day: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>'
+                            ))
                 
                 # Add month labels on x-axis
                 month_starts = [1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335]
                 
                 fig_yearly.update_layout(
-                    height=450,
+                    height=500,
                     xaxis=dict(
                         tickmode='array',
                         tickvals=month_starts,
@@ -1108,11 +1175,30 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     ),
                     yaxis_title="Cumulative Value (Base 100)",
                     hovermode='x unified',
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                    legend=dict(
+                        orientation="h", 
+                        yanchor="bottom", 
+                        y=1.02, 
+                        xanchor="center", 
+                        x=0.5,
+                        font=dict(size=10)
+                    )
                 )
                 fig_yearly.add_hline(y=100, line_dash="dash", line_color="rgba(255,255,255,0.3)")
                 fig_yearly = apply_plotly_theme(fig_yearly)
                 st.plotly_chart(fig_yearly, use_container_width=True)
+                
+                # Current year callout
+                if current_year in years_to_analyze:
+                    current_year_data = seasonality_df[seasonality_df['Year'] == current_year]
+                    if len(current_year_data) > 0:
+                        ytd_return = ((1 + current_year_data['Return']).prod() - 1) * 100
+                        last_date = current_year_data['Date'].max().strftime('%d %b %Y')
+                        
+                        if ytd_return >= 0:
+                            st.success(f"📍 **{current_year} YTD**: {ytd_return:+.2f}% (as of {last_date})")
+                        else:
+                            st.error(f"📍 **{current_year} YTD**: {ytd_return:+.2f}% (as of {last_date})")
                 
                 # ---- TABLE: Monthly Returns by Year ----
                 st.markdown("#### 📊 Monthly Returns Table (%)")
