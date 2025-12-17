@@ -505,20 +505,58 @@ def calculate_portfolio_with_rebalancing(
 ):
     """
     Calculate portfolio returns with rebalancing and transaction costs.
-    Now also tracks weight evolution over time for visualization.
+    
+    Methodology based on:
+    - DeMiguel, Garlappi, Uppal (2009) "Optimal Versus Naive Diversification"
+      Review of Financial Studies
+    - Kirby & Ostdiek (2012) "It's All in the Timing"
+      Journal of Financial and Quantitative Analysis
+    
+    Transaction costs are applied as proportional costs that reduce portfolio value:
+        V_t = V_{t-1} * (1 + r_gross) * (1 - TC_t)
+    
+    where TC_t = turnover_t * cost_rate (only on rebalancing days)
+    
+    Parameters:
+    -----------
+    returns_df : pd.DataFrame
+        Daily returns for each asset
+    weights_target : array-like
+        Target portfolio weights
+    rebalance_freq : str, optional
+        Pandas frequency string ('D', 'W', 'M', 'Q', 'A') for calendar rebalancing
+    rebalance_threshold : float, optional
+        Maximum drift allowed before triggering rebalancing (e.g., 0.05 = 5%)
+    cost_bps : float
+        Proportional transaction cost in basis points (one-way).
+        Example: 10 bps = 0.10% cost per unit of turnover
+    rf_rate : float
+        Annual risk-free rate for Sharpe calculation
+        
+    Returns:
+    --------
+    dict with portfolio metrics, returns series, and rebalancing details
     """
     weights_target = np.array(weights_target)
     weights_current = weights_target.copy()
     n_assets = len(weights_target)
+    cost_rate = cost_bps / 10000  # Convert bps to decimal
     
-    portfolio_returns_gross = []
-    portfolio_returns_net = []
+    # Track portfolio value explicitly (not just returns)
+    # This is critical for correct compounding of costs
+    portfolio_value = 1.0  # Start with $1
+    portfolio_values = []
+    
+    # For gross comparison (same rebalancing, no costs)
+    portfolio_value_gross = 1.0
+    portfolio_values_gross = []
+    weights_gross = weights_target.copy()
+    
+    # Tracking variables
     turnover_history = []
     rebalance_dates = []
-    
-    # NEW: Track weights and drift over time
-    weights_history = []  # List of dicts with date and weights
-    drift_history = []    # List of dicts with date and max drift
+    weights_history = []
+    costs_paid = []
     
     # Build rebalance schedule if calendar-based
     if rebalance_freq:
@@ -527,34 +565,27 @@ def calculate_portfolio_with_rebalancing(
         rebalance_schedule = set()
     
     for date, daily_returns in returns_df.iterrows():
-        # 1. Portfolio return for the day (gross)
-        port_return_gross = np.dot(weights_current, daily_returns.values)
-        portfolio_returns_gross.append(port_return_gross)
         
-        # 2. Update weights based on drift
+        # ===== NET PORTFOLIO (with costs) =====
+        
+        # 1. Calculate gross return for the day
+        port_return_gross = np.dot(weights_current, daily_returns.values)
+        
+        # 2. Update portfolio value with gross return (before costs)
+        portfolio_value_pre_cost = portfolio_value * (1 + port_return_gross)
+        
+        # 3. Update weights based on drift (before any rebalancing)
         weights_drifted = weights_current * (1 + daily_returns.values)
-        total_value = weights_drifted.sum()
-        if total_value > 0:
-            weights_drifted = weights_drifted / total_value
+        total_weight = weights_drifted.sum()
+        if total_weight > 0:
+            weights_drifted = weights_drifted / total_weight
         else:
             weights_drifted = weights_target.copy()
         
-        # Calculate current drift
+        # 4. Calculate current drift
         current_drift = np.max(np.abs(weights_drifted - weights_target))
         
-        # Save weights and drift BEFORE potential rebalancing
-        weights_history.append({
-            'date': date,
-            'weights': weights_drifted.copy(),
-            'max_drift': current_drift,
-            'rebalanced': False  # Will update if rebalancing happens
-        })
-        drift_history.append({
-            'date': date,
-            'max_drift': current_drift
-        })
-        
-        # 3. Check if rebalancing needed
+        # 5. Check if rebalancing needed
         needs_rebalance = False
         
         if rebalance_threshold is not None:
@@ -563,30 +594,125 @@ def calculate_portfolio_with_rebalancing(
         elif rebalance_freq and date in rebalance_schedule:
             needs_rebalance = True
         
-        # 4. Execute rebalancing
+        # 6. Execute rebalancing with transaction costs
         if needs_rebalance:
-            turnover = np.sum(np.abs(weights_drifted - weights_target)) / 2
-            cost = turnover * (cost_bps / 10000)
-            port_return_net = port_return_gross - cost
+            # One-way turnover: sum of absolute weight changes
+            # This represents the total fraction of portfolio traded
+            # Note: we do NOT divide by 2 (one-way convention per DeMiguel et al.)
+            turnover = np.sum(np.abs(weights_drifted - weights_target))
             
+            # Transaction cost reduces portfolio value multiplicatively
+            # This correctly captures the compounding effect of costs
+            transaction_cost = turnover * cost_rate
+            portfolio_value_post_cost = portfolio_value_pre_cost * (1 - transaction_cost)
+            
+            # Reset weights to target
             weights_current = weights_target.copy()
+            
+            # Track
             turnover_history.append(turnover)
             rebalance_dates.append(date)
-            
-            # Mark this point as rebalanced
-            weights_history[-1]['rebalanced'] = True
-            weights_history[-1]['weights'] = weights_target.copy()  # After rebalancing
+            costs_paid.append(transaction_cost * portfolio_value_pre_cost)
         else:
-            port_return_net = port_return_gross
+            portfolio_value_post_cost = portfolio_value_pre_cost
             weights_current = weights_drifted.copy()
         
-        portfolio_returns_net.append(port_return_net)
+        # Update portfolio value
+        portfolio_value = portfolio_value_post_cost
+        portfolio_values.append(portfolio_value)
+        
+        # ===== GROSS PORTFOLIO (no costs, same rebalancing schedule) =====
+        
+        port_return_gross_track = np.dot(weights_gross, daily_returns.values)
+        portfolio_value_gross *= (1 + port_return_gross_track)
+        portfolio_values_gross.append(portfolio_value_gross)
+        
+        # Drift weights for gross tracking
+        weights_gross_drifted = weights_gross * (1 + daily_returns.values)
+        weights_gross_drifted = weights_gross_drifted / weights_gross_drifted.sum()
+        
+        # Rebalance gross at same times (but no cost)
+        if needs_rebalance:
+            weights_gross = weights_target.copy()
+        else:
+            weights_gross = weights_gross_drifted.copy()
+        
+        # Track weights
+        weights_history.append({
+            'date': date,
+            'weights': weights_current.copy(),
+            'max_drift': current_drift,
+            'rebalanced': needs_rebalance
+        })
     
-    # Convert to Series/DataFrames
-    returns_gross = pd.Series(portfolio_returns_gross, index=returns_df.index)
-    returns_net = pd.Series(portfolio_returns_net, index=returns_df.index)
+    # Convert to series
+    portfolio_values_series = pd.Series(portfolio_values, index=returns_df.index)
+    portfolio_values_gross_series = pd.Series(portfolio_values_gross, index=returns_df.index)
     
-    # Create weights DataFrame for easy plotting
+    # Calculate returns from values
+    returns_net = portfolio_values_series.pct_change().dropna()
+    returns_gross = portfolio_values_gross_series.pct_change().dropna()
+    
+    # ===== CALCULATE METRICS =====
+    
+    # Time period
+    n_years = len(returns_df) / 252
+    
+    # Total returns
+    total_return_net = portfolio_values_series.iloc[-1] - 1
+    total_return_gross = portfolio_values_gross_series.iloc[-1] - 1
+    
+    # Annualized returns (geometric - correct for compounding)
+    ann_return_net = (1 + total_return_net) ** (1 / n_years) - 1 if n_years > 0 else 0
+    ann_return_gross = (1 + total_return_gross) ** (1 / n_years) - 1 if n_years > 0 else 0
+    
+    # Volatility
+    ann_vol_net = returns_net.std() * np.sqrt(252)
+    ann_vol_gross = returns_gross.std() * np.sqrt(252)
+    
+    # Sharpe Ratio
+    sharpe_net = (ann_return_net - rf_rate) / ann_vol_net if ann_vol_net > 0 else 0
+    sharpe_gross = (ann_return_gross - rf_rate) / ann_vol_gross if ann_vol_gross > 0 else 0
+    
+    # Sortino Ratio (net)
+    downside = returns_net[returns_net < 0]
+    downside_std = downside.std() * np.sqrt(252) if len(downside) > 0 else ann_vol_net
+    sortino_net = (ann_return_net - rf_rate) / downside_std if downside_std > 0 else 0
+    
+    # Max Drawdown (net)
+    cumulative_net = portfolio_values_series
+    rolling_max = cumulative_net.expanding().max()
+    drawdown = (cumulative_net - rolling_max) / rolling_max
+    max_dd_net = drawdown.min()
+    
+    # Calmar Ratio (net)
+    calmar_net = ann_return_net / abs(max_dd_net) if max_dd_net != 0 else 0
+    
+    # ===== COST ANALYSIS =====
+    
+    # Total turnover over the period
+    total_turnover = sum(turnover_history)
+    
+    # Total costs as percentage of final value
+    # This measures cumulative drag from all transactions
+    if portfolio_values_gross_series.iloc[-1] > 0:
+        total_costs_pct = (1 - portfolio_values_series.iloc[-1] / portfolio_values_gross_series.iloc[-1]) * 100
+    else:
+        total_costs_pct = 0
+    
+    # Number of rebalancing events
+    n_rebalances = len(rebalance_dates)
+    
+    # Average turnover per rebalancing
+    avg_turnover = total_turnover / n_rebalances if n_rebalances > 0 else 0
+    
+    # Annual cost drag (difference in annualized returns)
+    cost_drag = ann_return_gross - ann_return_net
+    
+    # Annualized turnover
+    annual_turnover = total_turnover / n_years if n_years > 0 else 0
+    
+    # Create weights DataFrame for visualization
     weights_df = pd.DataFrame([
         {**{'date': w['date'], 'max_drift': w['max_drift'], 'rebalanced': w['rebalanced']}, 
          **{f'weight_{i}': w['weights'][i] for i in range(n_assets)}}
@@ -594,43 +720,12 @@ def calculate_portfolio_with_rebalancing(
     ])
     weights_df.set_index('date', inplace=True)
     
-    # Calculate metrics for GROSS returns
-    ann_return_gross = returns_gross.mean() * 252
-    ann_vol_gross = returns_gross.std() * np.sqrt(252)
-    sharpe_gross = (ann_return_gross - rf_rate) / ann_vol_gross if ann_vol_gross > 0 else 0
-    
-    # Calculate metrics for NET returns
-    ann_return_net = returns_net.mean() * 252
-    ann_vol_net = returns_net.std() * np.sqrt(252)
-    sharpe_net = (ann_return_net - rf_rate) / ann_vol_net if ann_vol_net > 0 else 0
-    
-    # Sortino (net)
-    downside = returns_net[returns_net < 0]
-    downside_std = downside.std() * np.sqrt(252) if len(downside) > 0 else ann_vol_net
-    sortino_net = (ann_return_net - rf_rate) / downside_std if downside_std > 0 else 0
-    
-    # Max Drawdown (net)
-    cumulative_net = (1 + returns_net).cumprod()
-    rolling_max = cumulative_net.expanding().max()
-    drawdown = (cumulative_net - rolling_max) / rolling_max
-    max_dd_net = drawdown.min()
-    
-    # Calmar (net)
-    calmar_net = ann_return_net / abs(max_dd_net) if max_dd_net != 0 else 0
-    
-    # Cost analysis
-    total_turnover = sum(turnover_history)
-    total_costs = total_turnover * (cost_bps / 10000)
-    n_rebalances = len(rebalance_dates)
-    avg_turnover = total_turnover / n_rebalances if n_rebalances > 0 else 0
-    cost_drag = ann_return_gross - ann_return_net
-    
     return {
         # Returns series
         'returns_gross': returns_gross,
         'returns_net': returns_net,
-        'cumulative_gross': (1 + returns_gross).cumprod(),
-        'cumulative_net': cumulative_net,
+        'cumulative_gross': portfolio_values_gross_series,
+        'cumulative_net': portfolio_values_series,
         
         # Gross metrics
         'ann_return_gross': ann_return_gross,
@@ -647,17 +742,17 @@ def calculate_portfolio_with_rebalancing(
         
         # Cost analysis
         'total_turnover': total_turnover,
-        'total_costs_pct': total_costs * 100,
+        'annual_turnover': annual_turnover,
+        'total_costs_pct': total_costs_pct,
         'n_rebalances': n_rebalances,
         'avg_turnover': avg_turnover,
         'cost_drag': cost_drag,
         'rebalance_dates': rebalance_dates,
         
-        # NEW: Weight tracking
+        # Weight tracking
         'weights_history': weights_df,
         'weights_target': weights_target
     }
-
 
 def calculate_all_portfolios_with_costs(analyzer, rebalance_freq, rebalance_threshold, cost_bps, rf_rate):
     """
@@ -1205,7 +1300,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             fig = apply_plotly_theme(fig)
             st.plotly_chart(fig, use_container_width=True)
         
-        # TAB 2: PORTFOLIOS
+# TAB 2: PORTFOLIOS
         with tab2:
             st.markdown("### 💼 Portfolio Analysis")
             
@@ -1387,24 +1482,18 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             st.markdown("---")
             
             # ============================================================
-            # SECTION 3: SEASONALITY ANALYSIS (THEORETICAL DATA)
+            # SECTION 3: SEASONALITY ANALYSIS
             # ============================================================
             st.markdown("""
             ## 📅 Seasonality Analysis
             
             Does this portfolio perform better in certain months? This analysis uses **theoretical returns** 
             (before costs) to identify **pure market patterns** that may repeat.
-            
-            **Use cases:**
-            - Understand historical performance patterns
-            - Identify potentially weak/strong periods
-            - Set realistic expectations for different times of year
             """)
             
             # Settings
             col1, col2 = st.columns(2)
             with col1:
-                # Use THEORETICAL returns (from analyzer, not cost-adjusted)
                 portfolio_returns = analyzer.portfolios[selected_p]['returns']
                 available_years = sorted(portfolio_returns.index.year.unique(), reverse=True)
                 
@@ -1442,7 +1531,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 
                 # Year-over-Year Performance
                 st.markdown("#### 📈 Year-over-Year Performance (Base 100)")
-                st.caption("Compare how the portfolio evolved throughout each year. Current year highlighted in yellow.")
+                st.caption("Compare how the portfolio evolved throughout each year.")
                 
                 fig_yearly = go.Figure()
                 
@@ -1481,41 +1570,22 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         
                         if is_current_year and len(year_data) > 0:
                             last_point = year_data.iloc[-1]
-                            
-                            fig_yearly.add_trace(go.Scatter(
-                                x=[last_point['DayOfYear']],
-                                y=[last_point['Cumulative']],
-                                mode='markers',
-                                marker=dict(size=20, color='rgba(255, 230, 109, 0.3)', line=dict(width=0)),
-                                showlegend=False,
-                                hoverinfo='skip'
-                            ))
-                            
-                            fig_yearly.add_trace(go.Scatter(
-                                x=[last_point['DayOfYear']],
-                                y=[last_point['Cumulative']],
-                                mode='markers',
-                                marker=dict(size=14, color='rgba(255, 230, 109, 0.5)', line=dict(width=0)),
-                                showlegend=False,
-                                hoverinfo='skip'
-                            ))
-                            
                             fig_yearly.add_trace(go.Scatter(
                                 x=[last_point['DayOfYear']],
                                 y=[last_point['Cumulative']],
                                 mode='markers+text',
-                                marker=dict(size=10, color='#FFE66D', line=dict(width=2, color='white'), symbol='circle'),
+                                marker=dict(size=12, color='#FFE66D', line=dict(width=2, color='white')),
                                 text=[f"{last_point['Cumulative']:.1f}"],
                                 textposition='top right',
-                                textfont=dict(color='#FFE66D', size=11, family='Inter'),
+                                textfont=dict(color='#FFE66D', size=11),
                                 showlegend=False,
-                                hovertemplate=f'<b>📍 LATEST ({current_year})</b><br>Day: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>'
+                                hovertemplate=f'<b>📍 LATEST ({current_year})</b><br>Value: %{{y:.2f}}<extra></extra>'
                             ))
                 
                 month_starts = [1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335]
                 
                 fig_yearly.update_layout(
-                    height=500,
+                    height=450,
                     xaxis=dict(tickmode='array', tickvals=month_starts, ticktext=month_names, title="Month"),
                     yaxis_title="Cumulative Value (Base 100)",
                     hovermode='x unified',
@@ -1536,8 +1606,8 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         else:
                             st.error(f"📍 **{current_year} YTD**: {ytd_return:+.2f}% (as of {last_date})")
                 
-                # Monthly Returns Table
-                st.markdown("#### 📊 Monthly Returns Table (%)")
+                # Average Monthly Performance
+                st.markdown("#### 📊 Average Monthly Performance")
                 
                 monthly_stats = seasonality_df.groupby(['Year', 'Month']).agg(
                     avg_daily_return=('Return', 'mean'),
@@ -1546,30 +1616,9 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 
                 monthly_stats['Monthly_Return'] = ((1 + monthly_stats['avg_daily_return']) ** monthly_stats['trading_days'] - 1) * 100
                 
-                monthly_pivot = monthly_stats.pivot(index='Month', columns='Year', values='Monthly_Return')
-                
-                month_name_map = {1: 'January', 2: 'February', 3: 'March', 4: 'April', 
-                                 5: 'May', 6: 'June', 7: 'July', 8: 'August',
-                                 9: 'September', 10: 'October', 11: 'November', 12: 'December'}
-                monthly_pivot.index = monthly_pivot.index.map(month_name_map)
-                
-                monthly_pivot['Average'] = monthly_pivot.mean(axis=1)
-                
-                monthly_pivot_display = monthly_pivot.copy()
-                for col in monthly_pivot_display.columns:
-                    monthly_pivot_display[col] = monthly_pivot_display[col].apply(
-                        lambda x: f"{x:+.2f}%" if pd.notna(x) else "—"
-                    )
-                
-                monthly_pivot_display = monthly_pivot_display.reset_index()
-                monthly_pivot_display.columns = ['Month'] + [str(c) for c in monthly_pivot_display.columns[1:]]
-                
-                st.markdown(create_styled_table(monthly_pivot_display, f"Monthly Returns - {analyzer.portfolios[selected_p]['name']}"), unsafe_allow_html=True)
-                
-                # Average Monthly Performance
-                st.markdown("#### 📊 Average Monthly Performance")
-                
                 avg_monthly = monthly_stats.groupby('Month')['Monthly_Return'].mean().reset_index()
+                month_name_map = {1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun',
+                                 7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
                 avg_monthly['Month_Name'] = avg_monthly['Month'].map(month_name_map)
                 
                 colors = ['#4ECDC4' if x >= 0 else '#FF6B6B' for x in avg_monthly['Monthly_Return']]
@@ -1584,12 +1633,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     hovertemplate='<b>%{x}</b><br>Avg Return: %{y:.2f}%<extra></extra>'
                 )])
                 
-                fig_monthly_avg.update_layout(
-                    height=350,
-                    xaxis_title="Month",
-                    yaxis_title="Average Monthly Return (%)",
-                    xaxis_tickangle=-45
-                )
+                fig_monthly_avg.update_layout(height=350, xaxis_title="Month", yaxis_title="Average Monthly Return (%)")
                 fig_monthly_avg.add_hline(y=0, line_color="rgba(255,255,255,0.5)")
                 fig_monthly_avg = apply_plotly_theme(fig_monthly_avg)
                 st.plotly_chart(fig_monthly_avg, use_container_width=True)
@@ -1609,65 +1653,69 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     st.metric("✅ Positive Months", f"{positive_months}/12")
                 with col4:
                     seasonality_strength = avg_monthly['Monthly_Return'].std()
-                    st.metric("📊 Seasonality Strength", f"{seasonality_strength:.2f}%", 
+                    st.metric("📊 Seasonality", f"{seasonality_strength:.2f}%", 
                              "High" if seasonality_strength > 3 else "Moderate" if seasonality_strength > 1.5 else "Low")
-                
-                with st.expander("📖 How to Interpret Seasonality"):
-                    st.markdown("""
-                    ### Understanding the Charts
-                    
-                    **Year-over-Year Performance:**
-                    - Each line shows the portfolio's journey through one calendar year
-                    - Lines starting above 100 and staying there = positive year
-                    - Consistent patterns across years suggest reliable seasonality
-                    - Divergent lines = high year-to-year variability
-                    
-                    **Monthly Returns Table:**
-                    - Positive values = gains, Negative values = losses
-                    - "Average" column = typical performance for that month
-                    - Consistent patterns in a row = reliable seasonal effect
-                    
-                    **Average Monthly Performance:**
-                    - Visual summary of typical monthly returns
-                    - Large bars = strong seasonal effect
-                    - Mixed positive/negative = weak seasonality
-                    
-                    ---
-                    
-                    ### Seasonality Strength Interpretation
-                    
-                    | Strength | Std Dev | Meaning |
-                    |----------|---------|---------|
-                    | **High** | > 3% | Strong seasonal patterns - timing may add value |
-                    | **Moderate** | 1.5-3% | Some patterns exist but not dominant |
-                    | **Low** | < 1.5% | Weak seasonality - timing unlikely to help |
-                    
-                    ---
-                    
-                    ### ⚠️ Important Caveats
-                    
-                    1. **Past ≠ Future:** Historical patterns may not repeat
-                    2. **Sample size matters:** More years = more reliable patterns
-                    3. **These are theoretical returns:** Actual returns will be reduced by transaction costs
-                    4. **Not a trading signal:** Use as context, not as a buy/sell trigger
-                    """)
             else:
-                st.warning("⚠️ Not enough data for seasonality analysis. Need at least 20 trading days.")
+                st.warning("⚠️ Not enough data for seasonality analysis.")
             
             st.markdown("---")
 
             # ============================================================
-            # SECTION 4: COST & REBALANCING IMPACT (REALITY CHECK)
+            # SECTION 4: TRANSACTION COSTS & REBALANCING IMPACT
             # ============================================================
             st.markdown("""
-            ## 💰 Cost & Rebalancing Impact
+            ## 💰 Transaction Costs & Rebalancing Impact
             
-            **Reality check time!** The theoretical returns above assume a frictionless world. 
-            In reality, every trade costs money. This section shows how **transaction costs** and 
-            **rebalancing frequency** erode your returns.
-            
-            This analysis answers: *"What would I actually have earned?"*
+            The theoretical returns above assume a frictionless world. In reality, **every trade costs money**.
+            This section shows how transaction costs and rebalancing frequency affect your actual returns.
             """)
+            
+            # Academic reference
+            with st.expander("📚 Methodology & Academic References"):
+                st.markdown("""
+                ### Transaction Cost Model
+                
+                This analysis implements **proportional transaction costs** following the methodology from:
+                
+                > **DeMiguel, V., Garlappi, L., & Uppal, R. (2009)**  
+                > *"Optimal Versus Naive Diversification: How Inefficient is the 1/N Portfolio Strategy?"*  
+                > Review of Financial Studies, 22(5), 1915-1953
+                
+                > **Kirby, C., & Ostdiek, B. (2012)**  
+                > *"It's All in the Timing: Simple Active Portfolio Strategies that Outperform Naive Diversification"*  
+                > Journal of Financial and Quantitative Analysis, 47(2), 437-467
+                
+                ---
+                
+                ### How Costs Are Calculated
+                
+                **Turnover** measures how much of the portfolio is traded during rebalancing:
+                
+                $$\\text{Turnover}_t = \\sum_{i=1}^{N} |w_{i,t}^{\\text{target}} - w_{i,t}^{\\text{current}}|$$
+                
+                **Transaction cost** reduces portfolio value multiplicatively:
+                
+                $$V_t^{\\text{after}} = V_t^{\\text{before}} \\times (1 - c \\times \\text{Turnover}_t)$$
+                
+                where $c$ is the proportional cost (e.g., 10 bps = 0.001).
+                
+                This multiplicative approach correctly captures the **compounding effect** of costs over time,
+                which is critical for long-term analysis.
+                
+                ---
+                
+                ### Typical Cost Ranges
+                
+                | Instrument | Typical Cost (bps) |
+                |------------|-------------------|
+                | Large-cap ETFs (SPY, QQQ) | 2-5 |
+                | Broad market ETFs | 5-10 |
+                | Individual stocks (liquid) | 5-15 |
+                | Individual stocks (less liquid) | 15-30 |
+                | International / EM | 20-50 |
+                
+                *Note: Costs include bid-ask spread + broker commissions*
+                """)
             
             # Check if we have cost-adjusted data
             has_costs = st.session_state.portfolios_with_costs is not None
@@ -1680,21 +1728,22 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     freq_names = {'D': 'Daily', 'W': 'Weekly', 'M': 'Monthly', 'Q': 'Quarterly', 'A': 'Annually'}
                     rebal_desc = freq_names.get(config['rebal_freq'], config['rebal_freq'])
                 elif config['rebal_thresh']:
-                    rebal_desc = f"Threshold-based ({config['rebal_thresh']*100:.0f}% drift trigger)"
+                    rebal_desc = f"Threshold ({config['rebal_thresh']*100:.0f}% drift)"
                 else:
-                    rebal_desc = "Buy & Hold (no rebalancing)"
+                    rebal_desc = "Buy & Hold"
                 
-                st.success(f"**Current Configuration:** {config['bps']} bps per trade | Rebalancing: {rebal_desc}")
+                st.info(f"**Current Settings:** {config['bps']} bps per trade | Rebalancing: {rebal_desc}")
                 
                 portfolios_data = st.session_state.portfolios_with_costs
                 
-                # Impact Summary KPIs
+                # ===== IMPACT SUMMARY =====
                 st.markdown("#### 📉 Cost Impact Summary")
                 
                 col1, col2, col3, col4 = st.columns(4)
                 
                 avg_cost_drag = np.mean([v['cost_drag'] for v in portfolios_data.values()])
-                avg_turnover = np.mean([v['total_turnover'] for v in portfolios_data.values()])
+                avg_annual_turnover = np.mean([v['annual_turnover'] for v in portfolios_data.values()])
+                total_rebalances = np.mean([v['n_rebalances'] for v in portfolios_data.values()])
                 
                 cost_drags = [(k, v['cost_drag']) for k, v in portfolios_data.items()]
                 most_affected = max(cost_drags, key=lambda x: x[1])
@@ -1704,38 +1753,38 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     st.metric(
                         "Avg Annual Cost Drag", 
                         f"{avg_cost_drag*100:.2f}%",
-                        delta=f"-{avg_cost_drag*100:.2f}% from gross",
-                        delta_color="inverse"
+                        help="Average annual return lost to transaction costs"
                     )
                 
                 with col2:
                     st.metric(
-                        "Avg Portfolio Turnover", 
-                        f"{avg_turnover*100:.0f}%",
-                        help="Total value traded as % of portfolio"
+                        "Avg Annual Turnover", 
+                        f"{avg_annual_turnover*100:.0f}%",
+                        help="Average portfolio turnover per year"
                     )
                 
                 with col3:
                     st.metric(
-                        "Most Impacted", 
+                        "Most Affected", 
                         portfolios_data[most_affected[0]]['name'].split()[0],
-                        delta=f"-{most_affected[1]*100:.2f}%",
+                        delta=f"-{most_affected[1]*100:.2f}%/yr",
                         delta_color="inverse"
                     )
                 
                 with col4:
                     st.metric(
-                        "Least Impacted", 
+                        "Least Affected", 
                         portfolios_data[least_affected[0]]['name'].split()[0],
-                        delta=f"-{least_affected[1]*100:.2f}%",
+                        delta=f"-{least_affected[1]*100:.2f}%/yr",
                         delta_color="inverse"
                     )
                 
-                # Detailed comparison table
+                # ===== COMPARISON TABLE =====
                 st.markdown("#### 📊 Gross vs Net Performance")
                 
                 cost_comparison_data = []
                 for idx, (key, p) in enumerate(sorted(portfolios_data.items(), key=lambda x: x[1]['sharpe_net'], reverse=True), 1):
+                    # Calculate rank change
                     gross_rank = sorted(portfolios_data.keys(), key=lambda x: portfolios_data[x]['sharpe_gross'], reverse=True).index(key) + 1
                     net_rank = idx
                     rank_change = gross_rank - net_rank
@@ -1749,357 +1798,210 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         'Cost Drag': f"-{p['cost_drag']*100:.2f}%",
                         'Gross Sharpe': f"{p['sharpe_gross']:.3f}",
                         'Net Sharpe': f"{p['sharpe_net']:.3f}",
-                        'Turnover': f"{p['total_turnover']*100:.0f}%",
-                        '# Trades': p['n_rebalances']
+                        'Annual Turn.': f"{p['annual_turnover']*100:.0f}%",
+                        '# Rebal': p['n_rebalances']
                     })
                 
                 cost_comparison_df = pd.DataFrame(cost_comparison_data)
                 st.markdown(create_styled_table(cost_comparison_df, "Ranked by Net Sharpe (after costs)"), unsafe_allow_html=True)
                 
-                st.caption("💡 **Rank changes** show how strategies move when costs are considered. ↑ = improved ranking, ↓ = worse ranking")
+                st.caption("💡 **Rank changes** show how strategies move when costs are included. ↑ = improved, ↓ = worse")
                 
-                # Visual: Gross vs Net bar chart
-                st.markdown("#### 📊 Return Erosion by Strategy")
-                
-                fig_erosion = go.Figure()
-                
-                sorted_keys = sorted(portfolios_data.keys(), key=lambda x: portfolios_data[x]['ann_return_gross'], reverse=True)
-                strategies = [portfolios_data[k]['name'] for k in sorted_keys]
-                gross_returns = [portfolios_data[k]['ann_return_gross']*100 for k in sorted_keys]
-                net_returns = [portfolios_data[k]['ann_return_net']*100 for k in sorted_keys]
-                
-                fig_erosion.add_trace(go.Bar(
-                    name='Gross Return',
-                    x=strategies,
-                    y=gross_returns,
-                    marker_color='rgba(99, 102, 241, 0.4)',
-                    text=[f"{v:.1f}%" for v in gross_returns],
-                    textposition='outside',
-                    textfont=dict(size=9, color='#94a3b8')
-                ))
-                
-                fig_erosion.add_trace(go.Bar(
-                    name='Net Return',
-                    x=strategies,
-                    y=net_returns,
-                    marker_color='rgba(78, 205, 196, 0.9)',
-                    text=[f"{v:.1f}%" for v in net_returns],
-                    textposition='inside',
-                    textfont=dict(size=10, color='white')
-                ))
-                
-                fig_erosion.update_layout(
-                    barmode='overlay',
-                    height=400,
-                    xaxis_tickangle=-45,
-                    yaxis_title="Annualized Return (%)",
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
-                )
-                fig_erosion = apply_plotly_theme(fig_erosion)
-                st.plotly_chart(fig_erosion, use_container_width=True)
-                
-                st.caption("**Reading the chart:** Faded bar = gross (theoretical). Solid teal = net (actual). The gap is cost drag.")
-                
-                # Turnover analysis
-                st.markdown("#### 🔄 Turnover Analysis")
+                # ===== VISUALIZATIONS =====
+                st.markdown("#### 📊 Visual Comparison")
                 
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    sorted_by_turnover = sorted(portfolios_data.items(), key=lambda x: x[1]['total_turnover'], reverse=True)
+                    # Gross vs Net Returns
+                    fig_compare = go.Figure()
                     
-                    fig_turnover = go.Figure(data=[go.Bar(
-                        x=[portfolios_data[k]['name'] for k, v in sorted_by_turnover],
-                        y=[v['total_turnover']*100 for k, v in sorted_by_turnover],
-                        marker_color=[CHART_COLORS[i % len(CHART_COLORS)] for i in range(len(sorted_by_turnover))],
-                        text=[f"{v['total_turnover']*100:.0f}%" for k, v in sorted_by_turnover],
+                    sorted_keys = sorted(portfolios_data.keys(), key=lambda x: portfolios_data[x]['ann_return_gross'], reverse=True)
+                    strategies = [portfolios_data[k]['name'].split()[0] for k in sorted_keys]
+                    gross_returns = [portfolios_data[k]['ann_return_gross']*100 for k in sorted_keys]
+                    net_returns = [portfolios_data[k]['ann_return_net']*100 for k in sorted_keys]
+                    
+                    fig_compare.add_trace(go.Bar(
+                        name='Gross',
+                        x=strategies,
+                        y=gross_returns,
+                        marker_color='rgba(99, 102, 241, 0.5)',
+                        text=[f"{v:.1f}%" for v in gross_returns],
                         textposition='outside',
-                        textfont=dict(size=9, color='#E2E8F0')
-                    )])
-                    fig_turnover.update_layout(
-                        height=300,
-                        xaxis_tickangle=-45,
-                        yaxis_title="Total Turnover (%)"
+                        textfont=dict(size=9, color='#94a3b8')
+                    ))
+                    
+                    fig_compare.add_trace(go.Bar(
+                        name='Net',
+                        x=strategies,
+                        y=net_returns,
+                        marker_color='rgba(78, 205, 196, 0.9)',
+                        text=[f"{v:.1f}%" for v in net_returns],
+                        textposition='inside',
+                        textfont=dict(size=9, color='white')
+                    ))
+                    
+                    fig_compare.update_layout(
+                        barmode='overlay',
+                        height=350,
+                        yaxis_title="Annualized Return (%)",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
                     )
-                    fig_turnover = apply_plotly_theme(fig_turnover)
-                    st.plotly_chart(fig_turnover, use_container_width=True)
+                    fig_compare = apply_plotly_theme(fig_compare)
+                    st.plotly_chart(fig_compare, use_container_width=True)
+                    st.caption("Faded = Gross | Solid = Net")
                 
                 with col2:
+                    # Cost Efficiency Scatter
                     fig_efficiency = go.Figure()
                     
                     for i, (k, p) in enumerate(portfolios_data.items()):
                         fig_efficiency.add_trace(go.Scatter(
-                            x=[p['total_turnover']*100],
+                            x=[p['annual_turnover']*100],
                             y=[p['sharpe_net']],
                             mode='markers+text',
                             name=p['name'],
-                            marker=dict(size=14, color=CHART_COLORS[i % len(CHART_COLORS)]),
+                            marker=dict(size=16, color=CHART_COLORS[i % len(CHART_COLORS)]),
                             text=[p['name'].split()[0]],
                             textposition='top center',
-                            textfont=dict(size=8, color='#E2E8F0'),
-                            hovertemplate=f"<b>{p['name']}</b><br>Turnover: %{{x:.0f}}%<br>Net Sharpe: %{{y:.3f}}<extra></extra>"
+                            textfont=dict(size=9, color='#E2E8F0'),
+                            hovertemplate=f"<b>{p['name']}</b><br>Turnover: %{{x:.0f}}%/yr<br>Net Sharpe: %{{y:.3f}}<extra></extra>"
                         ))
                     
                     fig_efficiency.update_layout(
-                        height=300,
-                        xaxis_title="Turnover (%)",
+                        height=350,
+                        xaxis_title="Annual Turnover (%)",
                         yaxis_title="Net Sharpe Ratio",
                         showlegend=False
                     )
                     fig_efficiency = apply_plotly_theme(fig_efficiency)
                     st.plotly_chart(fig_efficiency, use_container_width=True)
+                    st.caption("Top-left = most efficient (high Sharpe, low turnover)")
                 
-                st.caption("**Left:** Which strategies trade more. **Right:** Cost efficiency - high Sharpe + low turnover is ideal (top-left).")
+                # ===== CUMULATIVE IMPACT =====
+                st.markdown("#### 📈 Cumulative Cost Impact Over Time")
                 
-                # ============ WEIGHT EVOLUTION VISUALIZATION ============
-                st.markdown("---")
-                st.markdown("#### 📊 Weight Evolution & Rebalancing Events")
-                st.markdown("""
-                See how portfolio weights **drift over time** and when **rebalancing events** snap them back to target.
-                """)
-                
-                weight_viz_portfolio = st.selectbox(
-                    "Select strategy to visualize",
+                # Select portfolio for detailed view
+                detail_portfolio = st.selectbox(
+                    "Select strategy for detailed analysis",
                     options=list(portfolios_data.keys()),
                     format_func=lambda x: portfolios_data[x]['name'],
-                    key="weight_viz_select"
+                    key="cost_detail_select"
                 )
                 
-                p_data = portfolios_data[weight_viz_portfolio]
-                weights_hist = p_data['weights_history']
-                weights_target = p_data['weights_target']
-                rebalance_dates_list = p_data['rebalance_dates']
+                p_data = portfolios_data[detail_portfolio]
                 
-                asset_names = [get_display_name(t) for t in symbols]
-                significant_assets = [(i, name) for i, (name, w) in enumerate(zip(asset_names, weights_target)) if w > 0.01]
+                fig_cumulative = go.Figure()
                 
-                if len(significant_assets) > 0:
-                    
-                    viz_tab1, viz_tab2, viz_tab3 = st.tabs(["📈 Weight Drift", "🎯 Drift from Target", "📋 Rebalancing Log"])
-                    
-                    with viz_tab1:
-                        st.markdown("##### Actual Weights Over Time")
-                        st.caption("Solid lines = actual weights | Dashed lines = target weights | 🔴 = rebalancing event")
-                        
-                        fig_weights = go.Figure()
-                        
-                        for idx, (asset_idx, asset_name) in enumerate(significant_assets):
-                            col_name = f'weight_{asset_idx}'
-                            color = CHART_COLORS[idx % len(CHART_COLORS)]
-                            
-                            fig_weights.add_trace(go.Scatter(
-                                x=weights_hist.index,
-                                y=weights_hist[col_name] * 100,
-                                name=f"{asset_name}",
-                                mode='lines',
-                                line=dict(color=color, width=2),
-                                hovertemplate=f'<b>{asset_name}</b><br>Date: %{{x}}<br>Weight: %{{y:.2f}}%<extra></extra>'
-                            ))
-                            
-                            fig_weights.add_trace(go.Scatter(
-                                x=[weights_hist.index[0], weights_hist.index[-1]],
-                                y=[weights_target[asset_idx] * 100, weights_target[asset_idx] * 100],
-                                name=f"{asset_name} Target",
-                                mode='lines',
-                                line=dict(color=color, width=1, dash='dash'),
-                                opacity=0.5,
-                                showlegend=False,
-                                hoverinfo='skip'
-                            ))
-                        
-                        if len(rebalance_dates_list) > 0:
-                            y_pos = 50
-                            fig_weights.add_trace(go.Scatter(
-                                x=rebalance_dates_list,
-                                y=[y_pos] * len(rebalance_dates_list),
-                                mode='markers',
-                                name='Rebalancing',
-                                marker=dict(symbol='line-ns', size=15, color='rgba(255, 107, 107, 0.8)', line=dict(width=2, color='#FF6B6B')),
-                                hovertemplate='<b>🔄 Rebalancing</b><br>Date: %{x}<extra></extra>'
-                            ))
-                        
-                        fig_weights.update_layout(
-                            height=450,
-                            xaxis_title="Date",
-                            yaxis_title="Weight (%)",
-                            yaxis=dict(range=[0, max(weights_target) * 150]),
-                            hovermode='x unified',
-                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5, font=dict(size=9))
-                        )
-                        fig_weights = apply_plotly_theme(fig_weights)
-                        st.plotly_chart(fig_weights, use_container_width=True)
-                    
-                    with viz_tab2:
-                        st.markdown("##### Drift from Target Weights")
-                        
-                        threshold_pct = config['rebal_thresh'] * 100 if config['rebal_thresh'] else None
-                        
-                        if threshold_pct:
-                            st.caption(f"Red dashed line = rebalancing threshold ({threshold_pct:.0f}%)")
-                        else:
-                            st.caption("Vertical markers = calendar-based rebalancing dates")
-                        
-                        fig_drift = go.Figure()
-                        
-                        fig_drift.add_trace(go.Scatter(
-                            x=weights_hist.index,
-                            y=weights_hist['max_drift'] * 100,
-                            name='Max Drift',
-                            mode='lines',
-                            fill='tozeroy',
-                            line=dict(color='#6366F1', width=2),
-                            fillcolor='rgba(99, 102, 241, 0.3)',
-                            hovertemplate='<b>Max Drift</b><br>Date: %{x}<br>Drift: %{y:.2f}%<extra></extra>'
-                        ))
-                        
-                        if threshold_pct:
-                            fig_drift.add_hline(y=threshold_pct, line_dash="dash", line_color="#FF6B6B",
-                                               annotation_text=f"Threshold ({threshold_pct:.0f}%)", annotation_position="right")
-                        
-                        if len(rebalance_dates_list) > 0:
-                            rebal_drifts = weights_hist.loc[weights_hist.index.isin(rebalance_dates_list), 'max_drift'] * 100
-                            fig_drift.add_trace(go.Scatter(
-                                x=rebal_drifts.index,
-                                y=rebal_drifts.values,
-                                mode='markers',
-                                name='Rebalancing Event',
-                                marker=dict(size=10, color='#FF6B6B', symbol='circle', line=dict(width=2, color='white')),
-                                hovertemplate='<b>🔄 Rebalanced!</b><br>Date: %{x}<br>Drift was: %{y:.2f}%<extra></extra>'
-                            ))
-                        
-                        fig_drift.update_layout(
-                            height=350,
-                            xaxis_title="Date",
-                            yaxis_title="Max Drift from Target (%)",
-                            hovermode='x unified',
-                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
-                        )
-                        fig_drift = apply_plotly_theme(fig_drift)
-                        st.plotly_chart(fig_drift, use_container_width=True)
-                        
-                        col1, col2, col3, col4 = st.columns(4)
-                        with col1:
-                            st.metric("Avg Drift", f"{weights_hist['max_drift'].mean()*100:.2f}%")
-                        with col2:
-                            st.metric("Max Drift", f"{weights_hist['max_drift'].max()*100:.2f}%")
-                        with col3:
-                            st.metric("Min Drift", f"{weights_hist['max_drift'].min()*100:.2f}%")
-                        with col4:
-                            pct_above_5 = (weights_hist['max_drift'] > 0.05).mean() * 100
-                            st.metric("Days > 5% Drift", f"{pct_above_5:.1f}%")
-                    
-                    with viz_tab3:
-                        st.markdown("##### Rebalancing Event Log")
-                        
-                        if len(rebalance_dates_list) > 0:
-                            rebal_log = []
-                            
-                            for i, date in enumerate(rebalance_dates_list):
-                                if date in weights_hist.index:
-                                    drift_at_rebal = weights_hist.loc[date, 'max_drift'] * 100
-                                else:
-                                    drift_at_rebal = None
-                                
-                                if i > 0:
-                                    days_since_last = (date - rebalance_dates_list[i-1]).days
-                                else:
-                                    days_since_last = (date - weights_hist.index[0]).days
-                                
-                                rebal_log.append({
-                                    '#': i + 1,
-                                    'Date': date.strftime('%Y-%m-%d'),
-                                    'Drift at Rebal': f"{drift_at_rebal:.2f}%" if drift_at_rebal else "N/A",
-                                    'Days Since Last': days_since_last,
-                                    'Trigger': 'Threshold' if config['rebal_thresh'] else config['rebal_freq']
-                                })
-                            
-                            rebal_df = pd.DataFrame(rebal_log)
-                            st.markdown(create_styled_table(rebal_df, f"Rebalancing Events ({len(rebalance_dates_list)} total)"), unsafe_allow_html=True)
-                            
-                            avg_days_between = np.mean([r['Days Since Last'] for r in rebal_log])
-                            
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric("Total Rebalances", len(rebalance_dates_list))
-                            with col2:
-                                st.metric("Avg Days Between", f"{avg_days_between:.0f}")
-                            with col3:
-                                years = (weights_hist.index[-1] - weights_hist.index[0]).days / 365
-                                st.metric("Rebalances/Year", f"{len(rebalance_dates_list)/years:.1f}" if years > 0 else "N/A")
-                        else:
-                            st.info("🔄 No rebalancing events occurred. This happens with Buy & Hold or if drift never exceeded threshold.")
-                    
-                    with st.expander("📖 Understanding Weight Drift & Rebalancing"):
-                        st.markdown("""
-                        ### What is Weight Drift?
-                        
-                        When you build a portfolio with target weights, those weights **change over time** 
-                        as assets perform differently.
-                        
-                        **Example:**
-                        - Day 1: 50% AAPL, 50% MSFT (target)
-                        - After AAPL +20%, MSFT +5%: Now 53% AAPL, 47% MSFT
-                        - **Drift: 3%** (AAPL moved 3% from target)
-                        
-                        ---
-                        
-                        ### Why Rebalancing Matters
-                        
-                        | Without Rebalancing | With Rebalancing |
-                        |---------------------|------------------|
-                        | Winners grow larger | Maintain target allocation |
-                        | Risk profile changes | Consistent risk exposure |
-                        | Zero transaction costs | Costs from trading |
-                        
-                        ---
-                        
-                        ### Strategy Insights
-                        
-                        - **High drift strategies** (Max Sharpe): Concentrated → drift fast → more rebalancing
-                        - **Low drift strategies** (Equal Weight): Diversified → drift slow → less rebalancing
-                        - Trade-off: Tight tracking vs. lower costs
-                        """)
+                # Gross cumulative
+                fig_cumulative.add_trace(go.Scatter(
+                    x=p_data['cumulative_gross'].index,
+                    y=(p_data['cumulative_gross'] - 1) * 100,
+                    name='Gross (no costs)',
+                    mode='lines',
+                    line=dict(color='rgba(99, 102, 241, 0.7)', width=2, dash='dash'),
+                    hovertemplate='<b>Gross</b><br>Date: %{x}<br>Return: %{y:.2f}%<extra></extra>'
+                ))
                 
-                else:
-                    st.warning("⚠️ No significant asset weights to display.")
+                # Net cumulative
+                fig_cumulative.add_trace(go.Scatter(
+                    x=p_data['cumulative_net'].index,
+                    y=(p_data['cumulative_net'] - 1) * 100,
+                    name='Net (after costs)',
+                    mode='lines',
+                    line=dict(color='#4ECDC4', width=2.5),
+                    fill='tonexty',
+                    fillcolor='rgba(255, 107, 107, 0.2)',
+                    hovertemplate='<b>Net</b><br>Date: %{x}<br>Return: %{y:.2f}%<extra></extra>'
+                ))
                 
-                # Key Insights
+                # Mark rebalancing events
+                if len(p_data['rebalance_dates']) > 0 and len(p_data['rebalance_dates']) <= 50:
+                    rebal_y = [(p_data['cumulative_net'].loc[d] - 1) * 100 for d in p_data['rebalance_dates'] if d in p_data['cumulative_net'].index]
+                    rebal_x = [d for d in p_data['rebalance_dates'] if d in p_data['cumulative_net'].index]
+                    
+                    fig_cumulative.add_trace(go.Scatter(
+                        x=rebal_x,
+                        y=rebal_y,
+                        mode='markers',
+                        name='Rebalancing',
+                        marker=dict(size=6, color='#FF6B6B', symbol='circle'),
+                        hovertemplate='<b>🔄 Rebalance</b><br>Date: %{x}<extra></extra>'
+                    ))
+                
+                fig_cumulative.update_layout(
+                    height=400,
+                    xaxis_title="Date",
+                    yaxis_title="Cumulative Return (%)",
+                    hovermode='x unified',
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                )
+                fig_cumulative.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+                fig_cumulative = apply_plotly_theme(fig_cumulative)
+                st.plotly_chart(fig_cumulative, use_container_width=True)
+                
+                st.caption("**Shaded area** represents cumulative value lost to transaction costs over time.")
+                
+                # Summary metrics for selected portfolio
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    final_gross = (p_data['cumulative_gross'].iloc[-1] - 1) * 100
+                    st.metric("Total Gross Return", f"{final_gross:.2f}%")
+                with col2:
+                    final_net = (p_data['cumulative_net'].iloc[-1] - 1) * 100
+                    st.metric("Total Net Return", f"{final_net:.2f}%")
+                with col3:
+                    total_cost = final_gross - final_net
+                    st.metric("Total Cost Impact", f"-{total_cost:.2f}%")
+                with col4:
+                    n_years = len(p_data['cumulative_net']) / 252
+                    st.metric("Period", f"{n_years:.1f} years")
+                
+                # ===== KEY INSIGHTS =====
                 with st.expander("💡 Key Insights & Recommendations"):
                     best_gross = max(portfolios_data.items(), key=lambda x: x[1]['sharpe_gross'])
                     best_net = max(portfolios_data.items(), key=lambda x: x[1]['sharpe_net'])
-                    highest_turnover = max(portfolios_data.items(), key=lambda x: x[1]['total_turnover'])
-                    lowest_turnover = min(portfolios_data.items(), key=lambda x: x[1]['total_turnover'])
+                    lowest_turnover = min(portfolios_data.items(), key=lambda x: x[1]['annual_turnover'])
+                    highest_turnover = max(portfolios_data.items(), key=lambda x: x[1]['annual_turnover'])
                     winner_changed = best_gross[0] != best_net[0]
                     
                     st.markdown(f"""
-                    ### 📊 Analysis Results
+                    ### Analysis Results
                     
                     **Best Strategy (Theoretical):** {best_gross[1]['name']} (Sharpe: {best_gross[1]['sharpe_gross']:.3f})
                     
                     **Best Strategy (After Costs):** {best_net[1]['name']} (Sharpe: {best_net[1]['sharpe_net']:.3f})
                     
-                    {"⚠️ **Winner changed!** The best theoretical strategy is NOT the best after costs." if winner_changed else "✅ **Consistent winner.** Best strategy remains the same after costs."}
+                    {"⚠️ **Winner changed!** Transaction costs reversed the ranking." if winner_changed else "✅ **Consistent winner.** Best strategy holds after costs."}
                     
                     ---
                     
-                    ### 💡 Recommendations
+                    ### Recommendations
                     
-                    1. **Minimize costs:** Consider **{lowest_turnover[1]['name']}** (lowest turnover: {lowest_turnover[1]['total_turnover']*100:.0f}%)
+                    1. **Lowest cost option:** {lowest_turnover[1]['name']} ({lowest_turnover[1]['annual_turnover']*100:.0f}% annual turnover)
                     
-                    2. **Maximize net returns:** Consider **{best_net[1]['name']}** (best net Sharpe: {best_net[1]['sharpe_net']:.3f})
+                    2. **Best risk-adjusted after costs:** {best_net[1]['name']} (Net Sharpe: {best_net[1]['sharpe_net']:.3f})
                     
-                    3. **Cost savings:** Switching from {highest_turnover[1]['name']} to {lowest_turnover[1]['name']} saves ~**{(highest_turnover[1]['cost_drag'] - lowest_turnover[1]['cost_drag'])*100:.2f}%** annually
+                    3. **Potential savings:** Switching from {highest_turnover[1]['name']} to {lowest_turnover[1]['name']} 
+                       saves ~**{(highest_turnover[1]['cost_drag'] - lowest_turnover[1]['cost_drag'])*100:.2f}%** annually
+                    
+                    ---
+                    
+                    ### General Guidelines
+                    
+                    - **Cost drag > 1%/year**: Consider less frequent rebalancing
+                    - **Turnover > 200%/year**: Strategy may be too active for retail implementation
+                    - **Rank changes**: If your preferred strategy drops significantly, costs matter for you
                     """)
             
             else:
                 st.warning("""
                 ⚠️ **Cost analysis not available.** 
                 
-                Enable transaction costs in the sidebar to see how real-world friction affects your portfolios.
-                
-                **To enable:**
+                To enable transaction cost analysis:
                 1. Check "Enable transaction costs" in the sidebar
-                2. Set your cost per trade (bps)
+                2. Set your estimated cost per trade (in basis points)
                 3. Choose a rebalancing strategy
                 4. Re-run the analysis
                 """)
