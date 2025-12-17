@@ -1832,7 +1832,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             return "Risk Parity"
                         elif "Equally Weighted" in name:
                             return "Equal"
-                        elif "Hierarchical" in name or "HRP" in name:
+                        elif "Hierarchical Risk Parity" in name or "HRP" in name:
                             return "HRP"
                         elif "Markowitz" in name:
                             return "Markowitz"
