@@ -1828,12 +1828,12 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             return "Max Return"
                         elif "Minimum Volatility" in name:
                             return "Min Vol"
+                        elif "Hierarchical Risk Parity" in name or "HRP" in name:
+                            return "HRP"                            
                         elif "Risk Parity" in name:
                             return "Risk Parity"
                         elif "Equally Weighted" in name:
                             return "Equal"
-                        elif "Hierarchical Risk Parity" in name or "HRP" in name:
-                            return "HRP"
                         elif "Markowitz" in name:
                             return "Markowitz"
                         else:
