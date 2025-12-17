@@ -1677,31 +1677,32 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 
                 This analysis implements **proportional transaction costs** following the methodology from:
                 
-                **DeMiguel, V., Garlappi, L., & Uppal, R. (2009)**  
-                *"Optimal Versus Naive Diversification: How Inefficient is the 1/N Portfolio Strategy?"*  
-                Review of Financial Studies, 22(5), 1915-1953
+                > **DeMiguel, V., Garlappi, L., & Uppal, R. (2009)**  
+                > *"Optimal Versus Naive Diversification: How Inefficient is the 1/N Portfolio Strategy?"*  
+                > Review of Financial Studies, 22(5), 1915-1953
                 
-                **Kirby, C., & Ostdiek, B. (2012)**  
-                *"It's All in the Timing: Simple Active Portfolio Strategies that Outperform Naive Diversification"*  
-                Journal of Financial and Quantitative Analysis, 47(2), 437-467
+                > **Kirby, C., & Ostdiek, B. (2012)**  
+                > *"It's All in the Timing: Simple Active Portfolio Strategies that Outperform Naive Diversification"*  
+                > Journal of Financial and Quantitative Analysis, 47(2), 437-467
                 
                 ---
                 
                 ### How Costs Are Calculated
                 
-                **Turnover** measures how much of the portfolio is traded during rebalancing.
+                **Turnover** measures how much of the portfolio is traded during rebalancing:
                 
-                Following Kirby & Ostdiek (2012), for a fully-invested portfolio:
+                $$\\tau_{p,t} = \\sum_{i=1}^{N} |\\omega_{i,t}^{target} - \\tilde{\\omega}_{i,t}|$$
                 
-                Turnover at time t = Sum of |target weight - current weight| for all assets
+                where $\\tilde{\\omega}_{i,t}$ is the weight of asset $i$ after price drift (before rebalancing).
                 
                 **Transaction cost** reduces portfolio value multiplicatively:
                 
-                Portfolio Value (after) = Portfolio Value (before) × (1 - cost rate × Turnover)
+                $$V_t^{after} = V_t^{before} \\times (1 - c \\times \\tau_{p,t})$$
                 
-                where cost rate is expressed as a decimal (e.g., 10 bps = 0.001).
+                where $c$ is the proportional cost rate (e.g., 10 bps = 0.001).
                 
-                This multiplicative approach correctly captures the **compounding effect** of costs over time.
+                This multiplicative approach correctly captures the **compounding effect** of costs over time,
+                which is critical for long-term analysis.
                 
                 ---
                 
@@ -1814,11 +1815,31 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    # Gross vs Net Returns - FIXED: removed duplicate labels
+                    # Gross vs Net Returns - FIXED: use full strategy names to avoid overlap
                     fig_compare = go.Figure()
                     
                     sorted_keys = sorted(portfolios_data.keys(), key=lambda x: portfolios_data[x]['ann_return_gross'], reverse=True)
-                    strategies = [portfolios_data[k]['name'].split()[0] for k in sorted_keys]
+                    # Use shorter but unique names
+                    def get_short_name(name):
+                        """Get a short but unique name for the strategy."""
+                        if "Maximum Sharpe" in name:
+                            return "Max Sharpe"
+                        elif "Maximum Return" in name:
+                            return "Max Return"
+                        elif "Minimum Volatility" in name:
+                            return "Min Vol"
+                        elif "Risk Parity" in name:
+                            return "Risk Parity"
+                        elif "Equally Weighted" in name:
+                            return "Equal"
+                        elif "Hierarchical" in name or "HRP" in name:
+                            return "HRP"
+                        elif "Markowitz" in name:
+                            return "Markowitz"
+                        else:
+                            return name.split()[0]
+                    
+                    strategies = [get_short_name(portfolios_data[k]['name']) for k in sorted_keys]
                     gross_returns = [portfolios_data[k]['ann_return_gross']*100 for k in sorted_keys]
                     net_returns = [portfolios_data[k]['ann_return_net']*100 for k in sorted_keys]
                     
@@ -1827,7 +1848,9 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         x=strategies,
                         y=gross_returns,
                         marker_color='rgba(99, 102, 241, 0.5)',
-                        textposition='none'  # No text on gross bars
+                        text=[f"{v:.1f}%" for v in gross_returns],
+                        textposition='outside',
+                        textfont=dict(size=9, color='#94a3b8')
                     ))
                     
                     fig_compare.add_trace(go.Bar(
@@ -1836,8 +1859,8 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         y=net_returns,
                         marker_color='rgba(78, 205, 196, 0.9)',
                         text=[f"{v:.1f}%" for v in net_returns],
-                        textposition='outside',
-                        textfont=dict(size=10, color='#E2E8F0')
+                        textposition='inside',
+                        textfont=dict(size=9, color='white')
                     ))
                     
                     fig_compare.update_layout(
@@ -1856,13 +1879,14 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     
                     for i, (k, p) in enumerate(portfolios_data.items()):
                         annual_turn = p.get('annual_turnover', p['total_turnover'] / (len(analyzer.returns) / 252))
+                        short_name = get_short_name(p['name'])
                         fig_efficiency.add_trace(go.Scatter(
                             x=[annual_turn*100],
                             y=[p['sharpe_net']],
                             mode='markers+text',
                             name=p['name'],
                             marker=dict(size=16, color=CHART_COLORS[i % len(CHART_COLORS)]),
-                            text=[p['name'].split()[0]],
+                            text=[short_name],
                             textposition='top center',
                             textfont=dict(size=9, color='#E2E8F0'),
                             hovertemplate=f"<b>{p['name']}</b><br>Turnover: %{{x:.0f}}%/yr<br>Net Sharpe: %{{y:.3f}}<extra></extra>"
