@@ -3987,8 +3987,8 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 n_assets = len(analyzer.symbols)
                 
                 # Annualized covariance and returns
-                cov_matrix = returns_aligned.cov() * 252  # Annualized covariance
-                mean_returns = returns_aligned.mean() * 252  # Annualized returns
+                cov_matrix = returns_aligned.cov() * 252
+                mean_returns = returns_aligned.mean() * 252
                 
                 # ===== GENERATE RANDOM PORTFOLIOS =====
                 np.random.seed(42)
@@ -4000,21 +4000,18 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 
                 for _ in range(n_portfolios):
                     if allow_short:
-                        # Allow negative weights (short positions)
                         w = np.random.normal(1, 0.3, n_assets)
-                        w = w / np.sum(w)  # Normalize to sum = 1
+                        w = w / np.sum(w)
                     else:
-                        # Long-only: Dirichlet distribution
                         w = np.random.dirichlet(np.ones(n_assets))
                     
-                    # Portfolio metrics
                     port_return = np.dot(mean_returns, w)
                     port_variance = np.dot(w, np.dot(cov_matrix, w))
-                    port_volatility = np.sqrt(port_variance)  # Standard deviation
+                    port_volatility = np.sqrt(port_variance)
                     port_sharpe = (port_return - rf_rate) / port_volatility if port_volatility > 0 else 0
                     
-                    portfolio_returns.append(port_return * 100)  # Convert to %
-                    portfolio_volatilities.append(port_volatility * 100)  # Convert to %
+                    portfolio_returns.append(port_return * 100)
+                    portfolio_volatilities.append(port_volatility * 100)
                     portfolio_sharpes.append(port_sharpe)
                     portfolio_weights.append(w)
                 
@@ -4062,25 +4059,26 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     hovertemplate='Return: %{y:.2f}%<br>Volatility: %{x:.2f}%<extra></extra>'
                 ))
                 
-                # 2. Individual assets (green squares)
+                # 2. Individual assets (NO legend - showlegend=False)
                 fig.add_trace(go.Scatter(
                     x=asset_volatilities,
                     y=asset_returns,
                     mode='markers+text',
                     name='Individual Assets',
+                    showlegend=False,  # Hide from legend
                     marker=dict(
-                        size=12,
-                        color='#4ECDC4',
+                        size=10,
+                        color='rgba(78, 205, 196, 0.6)',
                         symbol='square',
                         line=dict(width=1, color='white')
                     ),
-                    text=[get_display_name(s)[:8] for s in analyzer.symbols],
+                    text=[get_display_name(s)[:6] for s in analyzer.symbols],
                     textposition='top center',
-                    textfont=dict(size=9, color='#4ECDC4'),
+                    textfont=dict(size=8, color='rgba(78, 205, 196, 0.8)'),
                     hovertemplate='<b>%{text}</b><br>Return: %{y:.2f}%<br>Volatility: %{x:.2f}%<extra></extra>'
                 ))
                 
-                # 3. Your optimized portfolios (colored markers)
+                # 3. Your optimized portfolios (colored markers - IN legend)
                 portfolio_colors = ['#FFE66D', '#A855F7', '#6366F1', '#FF9F43', '#EC4899', '#10B981', '#F59E0B']
                 portfolio_symbols = ['star', 'diamond', 'hexagon', 'pentagon', 'circle', 'square', 'triangle-up']
                 
@@ -4116,7 +4114,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         font=dict(size=10)
                     ),
                     hovermode='closest',
-                    margin=dict(r=180)
+                    margin=dict(r=200)
                 )
                 
                 fig = apply_plotly_theme(fig)
@@ -4146,7 +4144,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 
                 st.markdown("""
                 The efficient frontier is the **upper-left edge** of the cloud. Use the slider 
-                to explore portfolios along this boundary.
+                to explore portfolios along this boundary and compare with your optimized strategies.
                 """)
                 
                 # Find approximate frontier by bucketing volatility and finding max return
@@ -4159,14 +4157,12 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     bucket_start = vol_min + i * bucket_size
                     bucket_end = bucket_start + bucket_size
                     
-                    # Find portfolios in this volatility bucket
                     bucket_indices = [
                         j for j, v in enumerate(portfolio_volatilities) 
                         if bucket_start <= v < bucket_end
                     ]
                     
                     if bucket_indices:
-                        # Find best return in bucket
                         best_idx = max(bucket_indices, key=lambda j: portfolio_returns[j])
                         frontier_points.append({
                             'volatility': portfolio_volatilities[best_idx],
@@ -4176,22 +4172,35 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         })
                 
                 if frontier_points:
-                    frontier_position = st.slider(
-                        "Risk Level (0% = Min Risk, 100% = Max Risk)",
-                        min_value=0,
-                        max_value=100,
-                        value=30,
-                        step=5,
-                        key="frontier_slider"
-                    )
+                    # Controls row
+                    ctrl_col1, ctrl_col2 = st.columns([2, 1])
+                    
+                    with ctrl_col1:
+                        frontier_position = st.slider(
+                            "Risk Level (0% = Min Risk, 100% = Max Risk)",
+                            min_value=0,
+                            max_value=100,
+                            value=30,
+                            step=5,
+                            key="frontier_slider"
+                        )
+                    
+                    with ctrl_col2:
+                        compare_strategy = st.selectbox(
+                            "Compare with strategy",
+                            options=list(analyzer.portfolios.keys()),
+                            format_func=lambda x: analyzer.portfolios[x]['name'],
+                            key="compare_strategy"
+                        )
                     
                     frontier_idx = int((frontier_position / 100) * (len(frontier_points) - 1))
                     selected = frontier_points[frontier_idx]
                     
+                    # ===== METRICS AND WEIGHTS =====
                     col1, col2 = st.columns([1, 1.5])
                     
                     with col1:
-                        st.markdown("##### 📊 Selected Portfolio")
+                        st.markdown("##### 📊 Selected Frontier Portfolio")
                         
                         # Risk profile indicator
                         if frontier_position < 25:
@@ -4222,16 +4231,22 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         
                         weights_data = []
                         for ticker, weight in zip(analyzer.symbols, selected['weights']):
-                            if abs(weight) > 0.01:  # Show weights > 1%
+                            if abs(weight) > 0.01:
                                 weights_data.append({
                                     'Asset': get_display_name(ticker),
+                                    'Ticker': ticker,
                                     'Weight': weight * 100
                                 })
                         
                         if weights_data:
                             weights_df = pd.DataFrame(weights_data).sort_values('Weight', ascending=False)
                             
-                            # Color based on positive/negative
+                            # Dynamic y-axis range based on data
+                            max_weight = weights_df['Weight'].max()
+                            min_weight = weights_df['Weight'].min()
+                            y_max = max(max_weight * 1.15, 10)  # At least 10%, or 15% above max
+                            y_min = min(min_weight * 1.15, 0) if min_weight < 0 else 0
+                            
                             colors = ['#4ECDC4' if w >= 0 else '#FF6B6B' for w in weights_df['Weight']]
                             
                             fig_w = go.Figure(data=[go.Bar(
@@ -4244,15 +4259,128 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             )])
                             
                             fig_w.update_layout(
-                                height=250,
+                                height=280,
                                 yaxis_title="Weight (%)",
+                                yaxis=dict(range=[y_min, y_max]),  # Dynamic range
                                 xaxis_title="",
                                 showlegend=False,
-                                margin=dict(t=10, b=30)
+                                margin=dict(t=20, b=30, l=50, r=20)
                             )
                             fig_w.add_hline(y=0, line_color="rgba(255,255,255,0.3)")
                             fig_w = apply_plotly_theme(fig_w)
                             st.plotly_chart(fig_w, use_container_width=True)
+                    
+                    st.markdown("---")
+                    
+                    # ===== PERFORMANCE COMPARISON =====
+                    st.markdown("##### 📈 Historical Performance Comparison")
+                    
+                    st.markdown(f"""
+                    Compare the **selected frontier portfolio** (risk level {frontier_position}%) 
+                    with **{analyzer.portfolios[compare_strategy]['name']}** over the analysis period.
+                    """)
+                    
+                    # Calculate cumulative returns for frontier portfolio
+                    frontier_weights = selected['weights']
+                    frontier_daily_returns = returns_aligned.dot(frontier_weights)
+                    frontier_cumulative = (1 + frontier_daily_returns).cumprod() * 100
+                    
+                    # Get comparison strategy cumulative returns
+                    compare_portfolio = analyzer.portfolios[compare_strategy]
+                    compare_cumulative = (1 + compare_portfolio['returns']).cumprod() * 100
+                    
+                    # Create performance chart
+                    fig_perf = go.Figure()
+                    
+                    # Frontier portfolio
+                    fig_perf.add_trace(go.Scatter(
+                        x=frontier_cumulative.index,
+                        y=frontier_cumulative.values,
+                        mode='lines',
+                        name=f'Frontier Portfolio ({frontier_position}% risk)',
+                        line=dict(color=risk_color, width=2.5),
+                        hovertemplate='<b>Frontier Portfolio</b><br>Date: %{x}<br>Value: %{y:.2f}<extra></extra>'
+                    ))
+                    
+                    # Comparison strategy
+                    strategy_color = portfolio_colors[list(analyzer.portfolios.keys()).index(compare_strategy) % len(portfolio_colors)]
+                    fig_perf.add_trace(go.Scatter(
+                        x=compare_cumulative.index,
+                        y=compare_cumulative.values,
+                        mode='lines',
+                        name=compare_portfolio['name'],
+                        line=dict(color=strategy_color, width=2.5, dash='dash'),
+                        hovertemplate=f'<b>{compare_portfolio["name"]}</b><br>Date: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>'
+                    ))
+                    
+                    # Base line
+                    fig_perf.add_hline(y=100, line_dash="dot", line_color="rgba(255,255,255,0.3)",
+                                      annotation_text="Initial Investment", annotation_position="right")
+                    
+                    fig_perf.update_layout(
+                        height=400,
+                        xaxis_title="Date",
+                        yaxis_title="Portfolio Value (Base 100)",
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="center",
+                            x=0.5
+                        ),
+                        hovermode='x unified'
+                    )
+                    
+                    fig_perf = apply_plotly_theme(fig_perf)
+                    st.plotly_chart(fig_perf, use_container_width=True)
+                    
+                    # Performance comparison metrics
+                    st.markdown("##### 📊 Performance Summary")
+                    
+                    # Calculate metrics for frontier portfolio
+                    frontier_ann_return = frontier_daily_returns.mean() * 252
+                    frontier_ann_vol = frontier_daily_returns.std() * np.sqrt(252)
+                    frontier_sharpe_calc = (frontier_ann_return - rf_rate) / frontier_ann_vol if frontier_ann_vol > 0 else 0
+                    frontier_cum_return = (frontier_cumulative.iloc[-1] / 100) - 1
+                    
+                    # Drawdown for frontier
+                    frontier_rolling_max = frontier_cumulative.expanding().max()
+                    frontier_drawdown = (frontier_cumulative - frontier_rolling_max) / frontier_rolling_max
+                    frontier_max_dd = frontier_drawdown.min()
+                    
+                    # Comparison metrics
+                    compare_cum_return = compare_portfolio['cumulative_return']
+                    compare_max_dd = compare_portfolio['max_drawdown']
+                    
+                    comparison_data = {
+                        'Metric': ['Cumulative Return', 'Ann. Return', 'Ann. Volatility', 'Sharpe Ratio', 'Max Drawdown'],
+                        f'Frontier ({frontier_position}%)': [
+                            f"{frontier_cum_return*100:.2f}%",
+                            f"{frontier_ann_return*100:.2f}%",
+                            f"{frontier_ann_vol*100:.2f}%",
+                            f"{frontier_sharpe_calc:.3f}",
+                            f"{frontier_max_dd*100:.2f}%"
+                        ],
+                        compare_portfolio['name']: [
+                            f"{compare_cum_return*100:.2f}%",
+                            f"{compare_portfolio['annualized_return']*100:.2f}%",
+                            f"{compare_portfolio['annualized_volatility']*100:.2f}%",
+                            f"{compare_portfolio['sharpe_ratio']:.3f}",
+                            f"{compare_max_dd*100:.2f}%"
+                        ]
+                    }
+                    
+                    comparison_df = pd.DataFrame(comparison_data)
+                    st.markdown(create_styled_table(comparison_df, "Side-by-Side Comparison"), unsafe_allow_html=True)
+                    
+                    # Quick insight
+                    frontier_better = frontier_sharpe_calc > compare_portfolio['sharpe_ratio']
+                    diff_sharpe = abs(frontier_sharpe_calc - compare_portfolio['sharpe_ratio'])
+                    
+                    if frontier_better:
+                        st.success(f"📊 The frontier portfolio has a **higher Sharpe ratio** (+{diff_sharpe:.3f}) than {compare_portfolio['name']}.")
+                    else:
+                        st.info(f"📊 {compare_portfolio['name']} has a **higher Sharpe ratio** (+{diff_sharpe:.3f}) than this frontier portfolio.")
                 
                 st.markdown("---")
                 
@@ -4261,9 +4389,9 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     st.markdown("""
                     ### What You See
                     
-                    - **Red cloud**: Thousands of randomly generated portfolios
-                    - **Green squares**: Individual assets (100% allocation to one asset)
-                    - **Colored shapes**: Your optimized strategies
+                    - **Red cloud**: Thousands of randomly generated portfolios with different weight combinations
+                    - **Teal squares**: Individual assets (100% allocation to one asset)
+                    - **Colored shapes**: Your optimized strategies (shown in legend)
                     
                     ### The Efficient Frontier
                     
@@ -4282,6 +4410,15 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     - Combining assets with low correlation reduces overall portfolio risk
                     - You can achieve volatility **lower** than any individual asset
                     - The leftmost point shows the **minimum variance portfolio**
+                    
+                    ### Comparing Frontier vs Optimized Strategies
+                    
+                    The performance comparison shows how a randomly-found frontier portfolio 
+                    compares to your optimized strategies. Key insights:
+                    
+                    - **Similar performance**: Your optimization is working well
+                    - **Frontier better**: There may be room to improve your strategy
+                    - **Strategy better**: Your strategy may have benefits not captured by mean-variance (e.g., robustness)
                     
                     ### Short Selling
                     
