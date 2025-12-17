@@ -1677,30 +1677,31 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 
                 This analysis implements **proportional transaction costs** following the methodology from:
                 
-                > **DeMiguel, V., Garlappi, L., & Uppal, R. (2009)**  
-                > *"Optimal Versus Naive Diversification: How Inefficient is the 1/N Portfolio Strategy?"*  
-                > Review of Financial Studies, 22(5), 1915-1953
+                **DeMiguel, V., Garlappi, L., & Uppal, R. (2009)**  
+                *"Optimal Versus Naive Diversification: How Inefficient is the 1/N Portfolio Strategy?"*  
+                Review of Financial Studies, 22(5), 1915-1953
                 
-                > **Kirby, C., & Ostdiek, B. (2012)**  
-                > *"It's All in the Timing: Simple Active Portfolio Strategies that Outperform Naive Diversification"*  
-                > Journal of Financial and Quantitative Analysis, 47(2), 437-467
+                **Kirby, C., & Ostdiek, B. (2012)**  
+                *"It's All in the Timing: Simple Active Portfolio Strategies that Outperform Naive Diversification"*  
+                Journal of Financial and Quantitative Analysis, 47(2), 437-467
                 
                 ---
                 
                 ### How Costs Are Calculated
                 
-                **Turnover** measures how much of the portfolio is traded during rebalancing:
+                **Turnover** measures how much of the portfolio is traded during rebalancing.
                 
-                $$\\text{Turnover}_t = \\sum_{i=1}^{N} |w_{i,t}^{\\text{target}} - w_{i,t}^{\\text{current}}|$$
+                Following Kirby & Ostdiek (2012), for a fully-invested portfolio:
+                
+                Turnover at time t = Sum of |target weight - current weight| for all assets
                 
                 **Transaction cost** reduces portfolio value multiplicatively:
                 
-                $$V_t^{\\text{after}} = V_t^{\\text{before}} \\times (1 - c \\times \\text{Turnover}_t)$$
+                Portfolio Value (after) = Portfolio Value (before) × (1 - cost rate × Turnover)
                 
-                where $c$ is the proportional cost (e.g., 10 bps = 0.001).
+                where cost rate is expressed as a decimal (e.g., 10 bps = 0.001).
                 
-                This multiplicative approach correctly captures the **compounding effect** of costs over time,
-                which is critical for long-term analysis.
+                This multiplicative approach correctly captures the **compounding effect** of costs over time.
                 
                 ---
                 
@@ -1813,7 +1814,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    # Gross vs Net Returns
+                    # Gross vs Net Returns - FIXED: removed duplicate labels
                     fig_compare = go.Figure()
                     
                     sorted_keys = sorted(portfolios_data.keys(), key=lambda x: portfolios_data[x]['ann_return_gross'], reverse=True)
@@ -1826,9 +1827,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         x=strategies,
                         y=gross_returns,
                         marker_color='rgba(99, 102, 241, 0.5)',
-                        text=[f"{v:.1f}%" for v in gross_returns],
-                        textposition='outside',
-                        textfont=dict(size=9, color='#94a3b8')
+                        textposition='none'  # No text on gross bars
                     ))
                     
                     fig_compare.add_trace(go.Bar(
@@ -1837,8 +1836,8 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         y=net_returns,
                         marker_color='rgba(78, 205, 196, 0.9)',
                         text=[f"{v:.1f}%" for v in net_returns],
-                        textposition='inside',
-                        textfont=dict(size=9, color='white')
+                        textposition='outside',
+                        textfont=dict(size=10, color='#E2E8F0')
                     ))
                     
                     fig_compare.update_layout(
@@ -1856,8 +1855,9 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     fig_efficiency = go.Figure()
                     
                     for i, (k, p) in enumerate(portfolios_data.items()):
+                        annual_turn = p.get('annual_turnover', p['total_turnover'] / (len(analyzer.returns) / 252))
                         fig_efficiency.add_trace(go.Scatter(
-                            x=[p['annual_turnover']*100],
+                            x=[annual_turn*100],
                             y=[p['sharpe_net']],
                             mode='markers+text',
                             name=p['name'],
@@ -1877,7 +1877,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     fig_efficiency = apply_plotly_theme(fig_efficiency)
                     st.plotly_chart(fig_efficiency, use_container_width=True)
                     st.caption("Top-left = most efficient (high Sharpe, low turnover)")
-                
+                    
                 # ===== CUMULATIVE IMPACT =====
                 st.markdown("#### 📈 Cumulative Cost Impact Over Time")
                 
@@ -2313,7 +2313,202 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         
                         Rolling metrics are calculated "looking backward" - the value on December 31, 2023 
                         reflects the previous {window_years} years, it does not predict the future.
-                        """)                
+                        """)
+
+            # ============================================================
+            # SECTION 4: ROLLING ANALYSIS - GROSS VS NET (COST IMPACT)
+            # ============================================================
+            if st.session_state.portfolios_with_costs is not None:
+                st.markdown("---")
+                
+                with st.expander("🔬 Advanced: Rolling Cost Impact Analysis"):
+                    st.markdown("""
+                    This section compares **theoretical (gross)** vs **after-cost (net)** rolling metrics 
+                    for a selected strategy. Use this to identify periods where transaction costs 
+                    had the largest impact on performance.
+                    """)
+                    
+                    portfolios_data = st.session_state.portfolios_with_costs
+                    
+                    # Strategy selector
+                    cost_roll_portfolio = st.selectbox(
+                        "Select strategy to analyze",
+                        options=list(portfolios_data.keys()),
+                        format_func=lambda x: portfolios_data[x]['name'],
+                        key="cost_rolling_select"
+                    )
+                    
+                    p_data = portfolios_data[cost_roll_portfolio]
+                    
+                    # Check if we have enough data
+                    window = window_years * 252
+                    
+                    if len(p_data['returns_gross']) < window:
+                        st.warning(f"⚠️ Insufficient data for rolling analysis. Need at least {window_years} years.")
+                    else:
+                        # Calculate rolling metrics for both gross and net
+                        returns_gross = p_data['returns_gross']
+                        returns_net = p_data['returns_net']
+                        
+                        # Rolling returns
+                        roll_ret_gross = returns_gross.rolling(window=window).apply(
+                            lambda x: (1 + x).prod() ** (252 / len(x)) - 1 if len(x) == window else np.nan
+                        ).dropna()
+                        
+                        roll_ret_net = returns_net.rolling(window=window).apply(
+                            lambda x: (1 + x).prod() ** (252 / len(x)) - 1 if len(x) == window else np.nan
+                        ).dropna()
+                        
+                        # Rolling volatility
+                        roll_vol_gross = returns_gross.rolling(window=window).std().dropna() * np.sqrt(252)
+                        roll_vol_net = returns_net.rolling(window=window).std().dropna() * np.sqrt(252)
+                        
+                        # Align indices
+                        common_idx = roll_ret_gross.index.intersection(roll_ret_net.index)
+                        roll_ret_gross = roll_ret_gross.loc[common_idx]
+                        roll_ret_net = roll_ret_net.loc[common_idx]
+                        
+                        common_idx_vol = roll_vol_gross.index.intersection(roll_vol_net.index)
+                        roll_vol_gross = roll_vol_gross.loc[common_idx_vol]
+                        roll_vol_net = roll_vol_net.loc[common_idx_vol]
+                        
+                        # Rolling cost drag
+                        roll_cost_drag = roll_ret_gross - roll_ret_net
+                        
+                        # Chart 1: Rolling Returns Comparison
+                        st.markdown(f"##### 📈 Rolling Returns: Gross vs Net ({window_years}-year window)")
+                        
+                        fig_roll_compare = go.Figure()
+                        
+                        fig_roll_compare.add_trace(go.Scatter(
+                            x=roll_ret_gross.index,
+                            y=roll_ret_gross * 100,
+                            name='Gross (theoretical)',
+                            mode='lines',
+                            line=dict(color='rgba(99, 102, 241, 0.7)', width=2, dash='dash'),
+                            hovertemplate='<b>Gross</b><br>Date: %{x}<br>Return: %{y:.2f}%<extra></extra>'
+                        ))
+                        
+                        fig_roll_compare.add_trace(go.Scatter(
+                            x=roll_ret_net.index,
+                            y=roll_ret_net * 100,
+                            name='Net (after costs)',
+                            mode='lines',
+                            line=dict(color='#4ECDC4', width=2.5),
+                            hovertemplate='<b>Net</b><br>Date: %{x}<br>Return: %{y:.2f}%<extra></extra>'
+                        ))
+                        
+                        fig_roll_compare.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+                        fig_roll_compare.update_layout(
+                            height=400,
+                            xaxis_title="Date",
+                            yaxis_title="Annualized Return (%)",
+                            hovermode='x unified',
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                        )
+                        fig_roll_compare = apply_plotly_theme(fig_roll_compare)
+                        st.plotly_chart(fig_roll_compare, use_container_width=True)
+                        
+                        # Chart 2: Rolling Cost Drag
+                        st.markdown(f"##### 💸 Rolling Cost Drag ({window_years}-year window)")
+                        st.caption("Shows the annualized return lost to transaction costs over rolling periods.")
+                        
+                        fig_cost_drag = go.Figure()
+                        
+                        fig_cost_drag.add_trace(go.Scatter(
+                            x=roll_cost_drag.index,
+                            y=roll_cost_drag * 100,
+                            name='Cost Drag',
+                            mode='lines',
+                            fill='tozeroy',
+                            line=dict(color='#FF6B6B', width=2),
+                            fillcolor='rgba(255, 107, 107, 0.3)',
+                            hovertemplate='<b>Cost Drag</b><br>Date: %{x}<br>Drag: %{y:.2f}%/yr<extra></extra>'
+                        ))
+                        
+                        fig_cost_drag.update_layout(
+                            height=300,
+                            xaxis_title="Date",
+                            yaxis_title="Cost Drag (%/year)",
+                            hovermode='x unified'
+                        )
+                        fig_cost_drag = apply_plotly_theme(fig_cost_drag)
+                        st.plotly_chart(fig_cost_drag, use_container_width=True)
+                        
+                        # Chart 3: Rolling Volatility Comparison
+                        st.markdown(f"##### 📊 Rolling Volatility: Gross vs Net ({window_years}-year window)")
+                        st.caption("Volatility should be nearly identical - small differences come from timing of cost deductions.")
+                        
+                        fig_vol_compare = go.Figure()
+                        
+                        fig_vol_compare.add_trace(go.Scatter(
+                            x=roll_vol_gross.index,
+                            y=roll_vol_gross * 100,
+                            name='Gross',
+                            mode='lines',
+                            line=dict(color='rgba(99, 102, 241, 0.7)', width=2, dash='dash'),
+                            hovertemplate='<b>Gross</b><br>Date: %{x}<br>Vol: %{y:.2f}%<extra></extra>'
+                        ))
+                        
+                        fig_vol_compare.add_trace(go.Scatter(
+                            x=roll_vol_net.index,
+                            y=roll_vol_net * 100,
+                            name='Net',
+                            mode='lines',
+                            line=dict(color='#4ECDC4', width=2.5),
+                            hovertemplate='<b>Net</b><br>Date: %{x}<br>Vol: %{y:.2f}%<extra></extra>'
+                        ))
+                        
+                        fig_vol_compare.update_layout(
+                            height=350,
+                            xaxis_title="Date",
+                            yaxis_title="Annualized Volatility (%)",
+                            hovermode='x unified',
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                        )
+                        fig_vol_compare = apply_plotly_theme(fig_vol_compare)
+                        st.plotly_chart(fig_vol_compare, use_container_width=True)
+                        
+                        # Summary statistics
+                        st.markdown("##### 📋 Cost Impact Statistics")
+                        
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            st.metric(
+                                "Avg Cost Drag",
+                                f"{roll_cost_drag.mean()*100:.2f}%/yr"
+                            )
+                        with col2:
+                            st.metric(
+                                "Max Cost Drag",
+                                f"{roll_cost_drag.max()*100:.2f}%/yr",
+                                help="Worst rolling period for cost impact"
+                            )
+                        with col3:
+                            st.metric(
+                                "Min Cost Drag",
+                                f"{roll_cost_drag.min()*100:.2f}%/yr",
+                                help="Best rolling period for cost impact"
+                            )
+                        with col4:
+                            cost_drag_vol = roll_cost_drag.std() * 100
+                            st.metric(
+                                "Cost Drag Volatility",
+                                f"{cost_drag_vol:.2f}%",
+                                help="How variable is the cost impact over time"
+                            )
+                        
+                        # Interpretation
+                        st.markdown("""
+                        ---
+                        **How to interpret:**
+                        - **Stable cost drag** (flat red area) = consistent trading activity across market conditions
+                        - **Variable cost drag** (spiky red area) = rebalancing triggered more in certain periods
+                        - **Higher cost drag during volatility** = threshold-based rebalancing triggers more often in turbulent markets
+                        - **Gross ≈ Net volatility** = costs mainly affect returns, not risk profile
+                        """)
+        
         # TAB 4: DEEP-DIVE STATISTICS (NEW)
         with tab4:
             st.markdown("### 🔬 Deep-dive Statistics")
