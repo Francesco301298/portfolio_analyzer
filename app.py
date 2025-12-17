@@ -3966,29 +3966,26 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             st.markdown("### 📐 Efficient Frontier")
             
             st.markdown("""
-            The efficient frontier represents **all optimal portfolios** - combinations of assets that 
-            maximize return for each level of risk. Each point on the frontier is a real portfolio 
-            with specific weights.
+            The efficient frontier is the **upper boundary** of all possible portfolios. 
+            Every point in the chart below represents a real portfolio with specific asset weights.
+            Gray points are **inefficient** portfolios - you could get more return for the same risk.
+            Colored points on the frontier are **optimal**.
             """)
             
             st.markdown("---")
             
-            # ============================================================
-            # SECTION 1: MAIN FRONTIER VISUALIZATION
-            # ============================================================
-            
             # Configuration
             col_config1, col_config2, col_config3 = st.columns(3)
             with col_config1:
-                n_frontier_points = st.slider("Number of frontier portfolios", 30, 150, 80, key="n_frontier")
+                n_random_portfolios = st.slider("Random portfolios to generate", 500, 5000, 2000, step=500, key="n_random")
             with col_config2:
                 show_cml = st.checkbox("Show Capital Market Line", value=True, key="show_cml")
             with col_config3:
                 show_individual_assets = st.checkbox("Show individual assets", value=True, key="show_assets")
             
-            with st.spinner("Calculating efficient frontier portfolios..."):
+            with st.spinner("Generating portfolio universe..."):
                 
-                # ===== CALCULATE FRONTIER WITH WEIGHTS =====
+                # ===== SETUP =====
                 returns_aligned = analyzer.returns.reindex(columns=analyzer.symbols)
                 expected_returns = returns_aligned.mean() * 252
                 cov_matrix = returns_aligned.cov() * 252
@@ -3999,28 +3996,55 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 if np.any(eigenvalues <= 0):
                     cov_matrix = cov_matrix + np.eye(n_assets) * 1e-8
                 
-                # Define return range
-                min_ret = expected_returns.min()
-                max_ret = expected_returns.max()
-                target_returns = np.linspace(min_ret * 0.95, max_ret * 1.05, n_frontier_points)
+                # ===== GENERATE RANDOM PORTFOLIOS =====
+                np.random.seed(42)  # Reproducibility
                 
-                # Calculate frontier portfolios with weights
+                random_portfolios = []
+                
+                for _ in range(n_random_portfolios):
+                    # Generate random weights (Dirichlet distribution ensures sum = 1)
+                    weights = np.random.dirichlet(np.ones(n_assets))
+                    
+                    # Calculate portfolio metrics
+                    port_return = np.dot(weights, expected_returns)
+                    port_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+                    port_sharpe = (port_return - rf_rate) / port_vol if port_vol > 0 else 0
+                    
+                    random_portfolios.append({
+                        'return': port_return,
+                        'volatility': port_vol,
+                        'sharpe': port_sharpe,
+                        'weights': weights
+                    })
+                
+                # ===== CALCULATE EFFICIENT FRONTIER =====
+                # Find frontier by optimization at different risk levels
+                min_vol = min(p['volatility'] for p in random_portfolios)
+                max_vol = max(p['volatility'] for p in random_portfolios)
+                
+                n_frontier_points = 100
+                target_vols = np.linspace(min_vol * 0.95, max_vol, n_frontier_points)
+                
                 frontier_portfolios = []
                 
-                for target in target_returns:
-                    def portfolio_variance(w):
-                        return np.dot(w.T, np.dot(cov_matrix, w))
+                for target_vol in target_vols:
+                    # Maximize return for given volatility
+                    def neg_return(w):
+                        return -np.dot(w, expected_returns)
+                    
+                    def vol_constraint(w):
+                        return np.sqrt(np.dot(w.T, np.dot(cov_matrix, w))) - target_vol
                     
                     constraints = [
                         {'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
-                        {'type': 'eq', 'fun': lambda x, t=target: np.dot(x, expected_returns) - t}
+                        {'type': 'eq', 'fun': vol_constraint}
                     ]
                     bounds = tuple((0, 1) for _ in range(n_assets))
                     initial_guess = np.ones(n_assets) / n_assets
                     
                     try:
                         result = minimize(
-                            portfolio_variance,
+                            neg_return,
                             initial_guess,
                             method='SLSQP',
                             bounds=bounds,
@@ -4030,256 +4054,277 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         
                         if result.success:
                             weights = result.x
-                            vol = np.sqrt(result.fun)
-                            ret = target
-                            sharpe = (ret - rf_rate) / vol if vol > 0 else 0
+                            port_return = np.dot(weights, expected_returns)
+                            port_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+                            port_sharpe = (port_return - rf_rate) / port_vol if port_vol > 0 else 0
                             
-                            # Store portfolio data
                             frontier_portfolios.append({
-                                'return': ret,
-                                'volatility': vol,
-                                'sharpe': sharpe,
+                                'return': port_return,
+                                'volatility': port_vol,
+                                'sharpe': port_sharpe,
                                 'weights': weights
                             })
                     except:
                         continue
                 
+                # ===== CREATE MAIN CHART =====
+                fig = go.Figure()
+                
+                # 1. Random portfolios (gray cloud)
+                random_vols = [p['volatility'] * 100 for p in random_portfolios]
+                random_rets = [p['return'] * 100 for p in random_portfolios]
+                random_sharpes = [p['sharpe'] for p in random_portfolios]
+                
+                # Create hover text for random portfolios
+                random_hover = []
+                for p in random_portfolios:
+                    top_weights = sorted(
+                        [(get_display_name(s), w*100) for s, w in zip(analyzer.symbols, p['weights'])],
+                        key=lambda x: x[1],
+                        reverse=True
+                    )[:5]  # Top 5 weights
+                    weights_str = "<br>".join([f"{name}: {w:.1f}%" for name, w in top_weights if w > 1])
+                    random_hover.append(
+                        f"<b>Random Portfolio</b><br>"
+                        f"Return: {p['return']*100:.2f}%<br>"
+                        f"Volatility: {p['volatility']*100:.2f}%<br>"
+                        f"Sharpe: {p['sharpe']:.3f}<br>"
+                        f"<br><b>Top Holdings:</b><br>{weights_str}"
+                    )
+                
+                fig.add_trace(go.Scatter(
+                    x=random_vols,
+                    y=random_rets,
+                    mode='markers',
+                    name='All Possible Portfolios',
+                    marker=dict(
+                        size=4,
+                        color='rgba(148, 163, 184, 0.3)',
+                        symbol='circle'
+                    ),
+                    hovertemplate='%{customdata}<extra></extra>',
+                    customdata=random_hover
+                ))
+                
+                # 2. Efficient Frontier (colored by Sharpe)
                 if len(frontier_portfolios) > 0:
-                    
-                    # ===== MAIN CHART =====
-                    fig = go.Figure()
-                    
-                    # 1. Individual Assets (if enabled)
-                    if show_individual_assets:
-                        asset_vols = np.sqrt(np.diag(cov_matrix)) * 100
-                        asset_rets = expected_returns.values * 100
-                        
-                        fig.add_trace(go.Scatter(
-                            x=asset_vols,
-                            y=asset_rets,
-                            mode='markers+text',
-                            name='Individual Assets',
-                            marker=dict(
-                                size=12,
-                                color='rgba(148, 163, 184, 0.7)',
-                                symbol='square',
-                                line=dict(width=1, color='white')
-                            ),
-                            text=[get_display_name(s)[:8] for s in analyzer.symbols],
-                            textposition='top center',
-                            textfont=dict(size=8, color='#94a3b8'),
-                            hovertemplate='<b>%{text}</b><br>Return: %{y:.2f}%<br>Volatility: %{x:.2f}%<extra></extra>'
-                        ))
-                    
-                    # 2. Efficient Frontier - as individual portfolio points
                     frontier_vols = [p['volatility'] * 100 for p in frontier_portfolios]
                     frontier_rets = [p['return'] * 100 for p in frontier_portfolios]
                     frontier_sharpes = [p['sharpe'] for p in frontier_portfolios]
                     
-                    # Create hover text with weights
-                    hover_texts = []
+                    # Create hover text for frontier portfolios
+                    frontier_hover = []
                     for p in frontier_portfolios:
-                        weights_str = "<br>".join([
-                            f"{get_display_name(s)}: {w*100:.1f}%" 
-                            for s, w in zip(analyzer.symbols, p['weights']) 
-                            if w > 0.01  # Only show weights > 1%
-                        ])
-                        hover_texts.append(
-                            f"<b>Frontier Portfolio</b><br>"
+                        top_weights = sorted(
+                            [(get_display_name(s), w*100) for s, w in zip(analyzer.symbols, p['weights'])],
+                            key=lambda x: x[1],
+                            reverse=True
+                        )[:5]
+                        weights_str = "<br>".join([f"{name}: {w:.1f}%" for name, w in top_weights if w > 1])
+                        frontier_hover.append(
+                            f"<b>Efficient Portfolio</b><br>"
                             f"Return: {p['return']*100:.2f}%<br>"
                             f"Volatility: {p['volatility']*100:.2f}%<br>"
                             f"Sharpe: {p['sharpe']:.3f}<br>"
-                            f"<br><b>Weights:</b><br>{weights_str}"
+                            f"<br><b>Top Holdings:</b><br>{weights_str}"
                         )
                     
-                    # Frontier points colored by Sharpe ratio
                     fig.add_trace(go.Scatter(
                         x=frontier_vols,
                         y=frontier_rets,
                         mode='markers',
                         name='Efficient Frontier',
                         marker=dict(
-                            size=8,
+                            size=10,
                             color=frontier_sharpes,
                             colorscale='Viridis',
                             colorbar=dict(
                                 title="Sharpe",
                                 thickness=15,
-                                len=0.5,
-                                y=0.75
+                                len=0.6,
+                                y=0.5,
+                                x=1.02
                             ),
-                            line=dict(width=0.5, color='white')
+                            line=dict(width=1, color='white')
                         ),
                         hovertemplate='%{customdata}<extra></extra>',
-                        customdata=hover_texts
+                        customdata=frontier_hover
                     ))
-                    
-                    # 3. Frontier line (connecting the points)
-                    sorted_indices = np.argsort(frontier_vols)
-                    sorted_vols = [frontier_vols[i] for i in sorted_indices]
-                    sorted_rets = [frontier_rets[i] for i in sorted_indices]
+                
+                # 3. Individual Assets
+                if show_individual_assets:
+                    asset_vols = np.sqrt(np.diag(cov_matrix)) * 100
+                    asset_rets = expected_returns.values * 100
                     
                     fig.add_trace(go.Scatter(
-                        x=sorted_vols,
-                        y=sorted_rets,
+                        x=asset_vols,
+                        y=asset_rets,
+                        mode='markers+text',
+                        name='Individual Assets',
+                        marker=dict(
+                            size=14,
+                            color='#FF6B6B',
+                            symbol='square',
+                            line=dict(width=2, color='white')
+                        ),
+                        text=[get_display_name(s)[:6] for s in analyzer.symbols],
+                        textposition='top center',
+                        textfont=dict(size=9, color='#FF6B6B'),
+                        hovertemplate='<b>%{text}</b><br>Return: %{y:.2f}%<br>Volatility: %{x:.2f}%<extra></extra>'
+                    ))
+                
+                # 4. Your optimized portfolios
+                portfolio_colors = {
+                    'max_sharpe': '#FFE66D',
+                    'min_volatility': '#4ECDC4', 
+                    'risk_parity': '#FF9F43',
+                    'hrp': '#A855F7',
+                    'equally_weighted': '#6366F1',
+                    'markowitz': '#EC4899',
+                    'max_return': '#EF4444'
+                }
+                
+                portfolio_symbols = {
+                    'max_sharpe': 'star',
+                    'min_volatility': 'diamond',
+                    'risk_parity': 'hexagon',
+                    'hrp': 'pentagon',
+                    'equally_weighted': 'circle',
+                    'markowitz': 'square',
+                    'max_return': 'triangle-up'
+                }
+                
+                for i, (p_name, p) in enumerate(analyzer.portfolios.items()):
+                    color = portfolio_colors.get(p_name, CHART_COLORS[i % len(CHART_COLORS)])
+                    symbol = portfolio_symbols.get(p_name, 'circle')
+                    
+                    # Build weights hover text
+                    top_weights = sorted(
+                        [(get_display_name(s), w*100) for s, w in zip(analyzer.symbols, p['weights'])],
+                        key=lambda x: x[1],
+                        reverse=True
+                    )[:5]
+                    weights_str = "<br>".join([f"{name}: {w:.1f}%" for name, w in top_weights if w > 1])
+                    
+                    fig.add_trace(go.Scatter(
+                        x=[p['annualized_volatility'] * 100],
+                        y=[p['annualized_return'] * 100],
+                        mode='markers',
+                        name=p['name'],
+                        marker=dict(
+                            size=18,
+                            color=color,
+                            symbol=symbol,
+                            line=dict(width=2, color='white')
+                        ),
+                        hovertemplate=(
+                            f"<b>{p['name']}</b><br>"
+                            f"Return: {p['annualized_return']*100:.2f}%<br>"
+                            f"Volatility: {p['annualized_volatility']*100:.2f}%<br>"
+                            f"Sharpe: {p['sharpe_ratio']:.3f}<br>"
+                            f"<br><b>Top Holdings:</b><br>{weights_str}<extra></extra>"
+                        )
+                    ))
+                
+                # 5. Capital Market Line
+                if show_cml and len(frontier_portfolios) > 0:
+                    max_sharpe_idx = np.argmax(frontier_sharpes)
+                    tangency_vol = frontier_vols[max_sharpe_idx]
+                    tangency_ret = frontier_rets[max_sharpe_idx]
+                    max_sharpe = frontier_sharpes[max_sharpe_idx]
+                    
+                    cml_x = [0, max(frontier_vols) * 1.2]
+                    cml_y = [rf_rate * 100, rf_rate * 100 + max_sharpe * cml_x[1]]
+                    
+                    fig.add_trace(go.Scatter(
+                        x=cml_x,
+                        y=cml_y,
                         mode='lines',
-                        name='Frontier Line',
-                        line=dict(color='rgba(255, 230, 109, 0.5)', width=2),
-                        hoverinfo='skip',
-                        showlegend=False
+                        name='Capital Market Line',
+                        line=dict(color='rgba(78, 205, 196, 0.7)', width=3, dash='dash'),
+                        hovertemplate='CML<br>Vol: %{x:.2f}%<br>Return: %{y:.2f}%<extra></extra>'
                     ))
                     
-                    # 4. Your optimized portfolios (highlighted)
-                    for i, (p_name, p) in enumerate(analyzer.portfolios.items()):
-                        # Determine marker style based on portfolio type
-                        if 'sharpe' in p_name.lower():
-                            marker_symbol = 'star'
-                            marker_size = 20
-                        elif 'min' in p_name.lower() or 'vol' in p_name.lower():
-                            marker_symbol = 'diamond'
-                            marker_size = 18
-                        elif 'hrp' in p_name.lower():
-                            marker_symbol = 'hexagon'
-                            marker_size = 18
-                        else:
-                            marker_symbol = 'circle'
-                            marker_size = 16
-                        
-                        # Build weights hover text
-                        weights_hover = "<br>".join([
-                            f"{get_display_name(s)}: {w*100:.1f}%" 
-                            for s, w in zip(analyzer.symbols, p['weights']) 
-                            if w > 0.01
-                        ])
-                        
-                        fig.add_trace(go.Scatter(
-                            x=[p['annualized_volatility'] * 100],
-                            y=[p['annualized_return'] * 100],
-                            mode='markers',
-                            name=p['name'],
-                            marker=dict(
-                                size=marker_size,
-                                color=CHART_COLORS[i % len(CHART_COLORS)],
-                                symbol=marker_symbol,
-                                line=dict(width=2, color='white')
-                            ),
-                            hovertemplate=(
-                                f"<b>{p['name']}</b><br>"
-                                f"Return: {p['annualized_return']*100:.2f}%<br>"
-                                f"Volatility: {p['annualized_volatility']*100:.2f}%<br>"
-                                f"Sharpe: {p['sharpe_ratio']:.3f}<br>"
-                                f"<br><b>Weights:</b><br>{weights_hover}<extra></extra>"
-                            )
-                        ))
-                    
-                    # 5. Capital Market Line
-                    if show_cml:
-                        # Find max Sharpe portfolio on frontier
-                        max_sharpe_idx = np.argmax(frontier_sharpes)
-                        tangency_vol = frontier_vols[max_sharpe_idx]
-                        tangency_ret = frontier_rets[max_sharpe_idx]
-                        max_sharpe = frontier_sharpes[max_sharpe_idx]
-                        
-                        # CML extends from risk-free to beyond tangency
-                        cml_x = [0, tangency_vol * 2]
-                        cml_y = [rf_rate * 100, rf_rate * 100 + max_sharpe * tangency_vol * 2]
-                        
-                        fig.add_trace(go.Scatter(
-                            x=cml_x,
-                            y=cml_y,
-                            mode='lines',
-                            name='Capital Market Line',
-                            line=dict(color='#4ECDC4', width=2, dash='dash'),
-                            hovertemplate='CML<br>Vol: %{x:.2f}%<br>Return: %{y:.2f}%<extra></extra>'
-                        ))
-                        
-                        # Risk-free point
-                        fig.add_trace(go.Scatter(
-                            x=[0],
-                            y=[rf_rate * 100],
-                            mode='markers',
-                            name=f'Risk-Free ({rf_rate*100:.1f}%)',
-                            marker=dict(size=12, color='#4ECDC4', symbol='star-triangle-up'),
-                            hovertemplate=f'<b>Risk-Free Asset</b><br>Return: {rf_rate*100:.2f}%<br>Volatility: 0%<extra></extra>'
-                        ))
-                    
-                    # Layout
-                    fig.update_layout(
-                        height=650,
-                        xaxis_title="Annualized Volatility (%)",
-                        yaxis_title="Annualized Return (%)",
-                        legend=dict(
-                            orientation="v",
-                            yanchor="top",
-                            y=0.99,
-                            xanchor="left",
-                            x=1.02,
-                            bgcolor='rgba(26,26,36,0.95)',
-                            bordercolor='rgba(99,102,241,0.5)',
-                            borderwidth=1,
-                            font=dict(size=10)
-                        ),
-                        hovermode='closest',
-                        margin=dict(r=150)
+                    # Risk-free point
+                    fig.add_trace(go.Scatter(
+                        x=[0],
+                        y=[rf_rate * 100],
+                        mode='markers',
+                        name=f'Risk-Free ({rf_rate*100:.1f}%)',
+                        marker=dict(size=12, color='#4ECDC4', symbol='star-triangle-up'),
+                        hovertemplate=f'<b>Risk-Free Asset</b><br>Return: {rf_rate*100:.2f}%<extra></extra>'
+                    ))
+                
+                # Layout
+                fig.update_layout(
+                    height=700,
+                    xaxis_title="Annualized Volatility (%)",
+                    yaxis_title="Annualized Return (%)",
+                    legend=dict(
+                        orientation="v",
+                        yanchor="top",
+                        y=0.99,
+                        xanchor="left",
+                        x=1.12,
+                        bgcolor='rgba(26,26,36,0.95)',
+                        bordercolor='rgba(99,102,241,0.5)',
+                        borderwidth=1,
+                        font=dict(size=10)
+                    ),
+                    hovermode='closest',
+                    margin=dict(r=200)
+                )
+                
+                fig = apply_plotly_theme(fig)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # ===== KEY INSIGHTS =====
+                st.markdown("---")
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric(
+                        "🎲 Portfolios Generated",
+                        f"{n_random_portfolios:,}",
+                        help="Random portfolios forming the cloud"
                     )
-                    
-                    fig = apply_plotly_theme(fig)
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # ===== KEY METRICS =====
-                    st.markdown("---")
-                    
-                    col1, col2, col3, col4, col5 = st.columns(5)
-                    
-                    min_vol_idx = np.argmin(frontier_vols)
-                    max_ret_idx = np.argmax(frontier_rets)
-                    max_sharpe_idx = np.argmax(frontier_sharpes)
-                    
-                    with col1:
-                        st.metric(
-                            "📉 Min Volatility",
-                            f"{frontier_vols[min_vol_idx]:.2f}%",
-                            f"Return: {frontier_rets[min_vol_idx]:.2f}%"
-                        )
-                    with col2:
-                        st.metric(
-                            "📈 Max Return",
-                            f"{frontier_rets[max_ret_idx]:.2f}%",
-                            f"Vol: {frontier_vols[max_ret_idx]:.2f}%"
-                        )
-                    with col3:
+                with col2:
+                    st.metric(
+                        "📈 Frontier Points",
+                        f"{len(frontier_portfolios)}",
+                        help="Optimal portfolios on the frontier"
+                    )
+                with col3:
+                    if len(frontier_portfolios) > 0:
+                        best_sharpe = max(frontier_sharpes)
                         st.metric(
                             "⭐ Max Sharpe",
-                            f"{frontier_sharpes[max_sharpe_idx]:.3f}",
-                            f"Vol: {frontier_vols[max_sharpe_idx]:.2f}%"
+                            f"{best_sharpe:.3f}"
                         )
-                    with col4:
-                        st.metric(
-                            "📊 Frontier Portfolios",
-                            f"{len(frontier_portfolios)}"
-                        )
-                    with col5:
+                with col4:
+                    if len(frontier_portfolios) > 0:
                         vol_range = max(frontier_vols) - min(frontier_vols)
                         st.metric(
-                            "📏 Risk Range",
-                            f"{vol_range:.1f}pp",
-                            help="Volatility range available on frontier"
+                            "📏 Vol Range",
+                            f"{min(frontier_vols):.1f}% - {max(frontier_vols):.1f}%"
                         )
-                    
-                    st.markdown("---")
-                    
-                    # ============================================================
-                    # SECTION 2: INTERACTIVE FRONTIER EXPLORER
-                    # ============================================================
-                    st.markdown("#### 🎚️ Explore the Frontier")
-                    
-                    st.markdown("""
-                    Use the slider to explore different portfolios along the efficient frontier. 
-                    Each position represents a **real portfolio** with specific asset weights.
-                    """)
-                    
+                
+                st.markdown("---")
+                
+                # ============================================================
+                # SECTION 2: INTERACTIVE FRONTIER EXPLORER
+                # ============================================================
+                st.markdown("#### 🎚️ Explore the Frontier")
+                
+                st.markdown("""
+                Move the slider to explore portfolios along the efficient frontier.
+                See how asset allocation changes as you take on more risk.
+                """)
+                
+                if len(frontier_portfolios) > 0:
                     frontier_position = st.slider(
-                        "Portfolio position (0% = Min Risk, 100% = Max Return)",
+                        "Risk Level (0% = Minimum Risk, 100% = Maximum Return)",
                         min_value=0,
                         max_value=100,
                         value=50,
@@ -4288,23 +4333,12 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     )
                     
                     portfolio_idx = int((frontier_position / 100) * (len(frontier_portfolios) - 1))
-                    selected_frontier_p = frontier_portfolios[portfolio_idx]
+                    selected_p = frontier_portfolios[portfolio_idx]
                     
                     col1, col2 = st.columns([1, 1.5])
                     
                     with col1:
                         st.markdown("##### 📊 Portfolio Metrics")
-                        
-                        metrics_data = {
-                            'Metric': ['Expected Return', 'Volatility', 'Sharpe Ratio', 'Position'],
-                            'Value': [
-                                f"{selected_frontier_p['return']*100:.2f}%",
-                                f"{selected_frontier_p['volatility']*100:.2f}%",
-                                f"{selected_frontier_p['sharpe']:.3f}",
-                                f"{frontier_position}% (risk scale)"
-                            ]
-                        }
-                        st.markdown(create_styled_table(pd.DataFrame(metrics_data)), unsafe_allow_html=True)
                         
                         if frontier_position < 25:
                             risk_profile = "🛡️ Conservative"
@@ -4319,14 +4353,22 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             risk_profile = "🚀 Aggressive"
                             risk_color = "#FF6B6B"
                         
-                        st.markdown(f"**Risk Profile:** <span style='color:{risk_color}'>{risk_profile}</span>", unsafe_allow_html=True)
+                        st.markdown(f"**Profile:** <span style='color:{risk_color}; font-size:1.2em;'>{risk_profile}</span>", unsafe_allow_html=True)
+                        
+                        mcols = st.columns(2)
+                        mcols[0].metric("Return", f"{selected_p['return']*100:.2f}%")
+                        mcols[1].metric("Volatility", f"{selected_p['volatility']*100:.2f}%")
+                        
+                        mcols2 = st.columns(2)
+                        mcols2[0].metric("Sharpe", f"{selected_p['sharpe']:.3f}")
+                        mcols2[1].metric("Position", f"{frontier_position}%")
                     
                     with col2:
                         st.markdown("##### ⚖️ Asset Allocation")
                         
                         weights_data = []
-                        for ticker, weight in zip(analyzer.symbols, selected_frontier_p['weights']):
-                            if weight > 0.001:
+                        for ticker, weight in zip(analyzer.symbols, selected_p['weights']):
+                            if weight > 0.005:
                                 weights_data.append({
                                     'Asset': get_display_name(ticker),
                                     'Weight': weight * 100
@@ -4338,166 +4380,138 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             y=weights_df['Asset'],
                             x=weights_df['Weight'],
                             orientation='h',
-                            marker_color=CHART_COLORS[portfolio_idx % len(CHART_COLORS)],
+                            marker=dict(
+                                color=weights_df['Weight'],
+                                colorscale='Viridis',
+                                line=dict(width=1, color='white')
+                            ),
                             text=[f"{w:.1f}%" for w in weights_df['Weight']],
                             textposition='outside',
                             textfont=dict(color='#E2E8F0', size=10)
                         )])
                         
                         fig_weights.update_layout(
-                            height=max(200, len(weights_data) * 35),
+                            height=max(250, len(weights_data) * 30),
                             xaxis_title="Weight (%)",
                             yaxis_title="",
                             showlegend=False,
-                            margin=dict(l=10, r=50, t=10, b=30)
+                            margin=dict(l=10, r=60, t=10, b=30)
                         )
                         fig_weights = apply_plotly_theme(fig_weights)
                         st.plotly_chart(fig_weights, use_container_width=True)
-                    
-                    st.markdown("---")
-                    
-                    # ============================================================
-                    # SECTION 3: FRONTIER COMPOSITION HEATMAP
-                    # ============================================================
-                    st.markdown("#### 🎨 How Weights Change Along the Frontier")
-                    
-                    st.markdown("""
-                    This heatmap shows how asset allocation shifts as you move from **low risk** (left) 
-                    to **high return** (right) along the efficient frontier.
-                    """)
-                    
-                    n_heatmap_points = min(20, len(frontier_portfolios))
-                    heatmap_indices = np.linspace(0, len(frontier_portfolios)-1, n_heatmap_points, dtype=int)
-                    
-                    weights_matrix = np.array([frontier_portfolios[i]['weights'] * 100 for i in heatmap_indices]).T
-                    
-                    x_labels = [f"{frontier_portfolios[i]['volatility']*100:.1f}%" for i in heatmap_indices]
-                    
-                    fig_heatmap = go.Figure(data=go.Heatmap(
-                        z=weights_matrix,
-                        x=x_labels,
-                        y=[get_display_name(s) for s in analyzer.symbols],
-                        colorscale='Blues',
-                        text=np.round(weights_matrix, 1),
-                        texttemplate='%{text:.0f}',
-                        textfont={"size": 9},
-                        colorbar=dict(title="Weight %", thickness=15),
-                        hovertemplate='<b>%{y}</b><br>Volatility: %{x}<br>Weight: %{z:.1f}%<extra></extra>'
-                    ))
-                    
-                    fig_heatmap.update_layout(
-                        height=max(350, len(analyzer.symbols) * 35),
-                        xaxis_title="Portfolio Volatility →",
-                        yaxis_title="",
-                        yaxis=dict(tickfont=dict(size=10))
-                    )
-                    fig_heatmap = apply_plotly_theme(fig_heatmap)
-                    st.plotly_chart(fig_heatmap, use_container_width=True)
-                    
-                    st.caption("""
-                    💡 **Pattern to look for**: As risk increases (moving right), weight typically shifts 
-                    from defensive/low-volatility assets to growth/high-return assets.
-                    """)
-                    
-                    st.markdown("---")
-                    
-                    # ============================================================
-                    # SECTION 4: YOUR PORTFOLIOS VS FRONTIER
-                    # ============================================================
-                    st.markdown("#### 🎯 Your Portfolios vs. The Frontier")
-                    
-                    st.markdown("""
-                    How do your optimized portfolios compare to the theoretical efficient frontier? 
-                    A portfolio **on** the frontier is mean-variance optimal; one **below** leaves 
-                    return "on the table" for the given risk level.
-                    """)
-                    
-                    portfolio_frontier_data = []
+                
+                st.markdown("---")
+                
+                # ============================================================
+                # SECTION 3: YOUR PORTFOLIOS VS FRONTIER
+                # ============================================================
+                st.markdown("#### 🎯 Your Portfolios: Efficiency Analysis")
+                
+                st.markdown("""
+                Are your optimized portfolios truly efficient? This table shows how close each 
+                strategy is to the theoretical frontier.
+                """)
+                
+                if len(frontier_portfolios) > 0:
+                    efficiency_data = []
                     
                     for p_name, p in analyzer.portfolios.items():
                         p_vol = p['annualized_volatility']
                         p_ret = p['annualized_return']
                         
+                        # Find frontier return at same volatility
                         closest_idx = np.argmin([abs(fp['volatility'] - p_vol) for fp in frontier_portfolios])
-                        frontier_ret_at_vol = frontier_portfolios[closest_idx]['return']
+                        frontier_ret = frontier_portfolios[closest_idx]['return']
                         
-                        distance = (p_ret - frontier_ret_at_vol) * 100
+                        gap = (p_ret - frontier_ret) * 100
+                        efficiency = min(100, (p_ret / frontier_ret) * 100) if frontier_ret > 0 else 100
                         
-                        portfolio_frontier_data.append({
+                        if abs(gap) < 0.3:
+                            status = '✅ On Frontier'
+                        elif gap > 0:
+                            status = '⬆️ Above'
+                        else:
+                            status = f'⬇️ {abs(gap):.1f}pp below'
+                        
+                        efficiency_data.append({
                             'Strategy': p['name'],
                             'Return': f"{p_ret*100:.2f}%",
                             'Volatility': f"{p_vol*100:.2f}%",
                             'Sharpe': f"{p['sharpe_ratio']:.3f}",
-                            'Frontier Gap': f"{distance:+.2f}pp",
-                            'Status': '✅ Optimal' if abs(distance) < 0.5 else ('⬆️ Above' if distance > 0 else '⬇️ Below')
+                            'Efficiency': f"{efficiency:.1f}%",
+                            'Status': status
                         })
                     
-                    frontier_comparison_df = pd.DataFrame(portfolio_frontier_data)
-                    st.markdown(create_styled_table(frontier_comparison_df, "Portfolio Efficiency Analysis"), unsafe_allow_html=True)
+                    efficiency_df = pd.DataFrame(efficiency_data)
+                    efficiency_df = efficiency_df.sort_values('Sharpe', ascending=False, key=lambda x: x.str.replace('%', '').astype(float) if x.dtype == 'object' else x)
+                    
+                    st.markdown(create_styled_table(efficiency_df, "Portfolio Efficiency"), unsafe_allow_html=True)
                     
                     st.caption("""
-                    **Frontier Gap**: Difference between portfolio return and frontier return at the same volatility level.
-                    - **✅ Optimal**: Within 0.5pp of frontier
-                    - **⬆️ Above**: Somehow exceeds theoretical frontier (possible with different estimation)
-                    - **⬇️ Below**: Sacrifices return for other objectives (e.g., HRP prioritizes diversification)
-                    """)
+                    **Efficiency**: Portfolio return as % of frontier return at same volatility. 
+                    100% = perfectly efficient. Below 100% = leaving return on the table.
                     
-                    # ============================================================
-                    # SECTION 5: EDUCATIONAL CONTENT
-                    # ============================================================
-                    with st.expander("📚 Understanding the Efficient Frontier"):
-                        st.markdown("""
-                        ### What is the Efficient Frontier?
-                        
-                        The efficient frontier, introduced by **Harry Markowitz in 1952**, represents all 
-                        **Pareto-optimal portfolios** - portfolios where you cannot improve one objective 
-                        (return) without worsening the other (risk).
-                        
-                        #### Key Concepts
-                        
-                        **1. Each Point = A Real Portfolio**
-                        
-                        Every point on the frontier represents a portfolio with specific asset weights. 
-                        Moving along the frontier means changing your allocation - there's no "free lunch."
-                        
-                        **2. The Curved Shape**
-                        
-                        The frontier curves because of **diversification benefits**. When assets aren't 
-                        perfectly correlated, combining them reduces portfolio volatility below the 
-                        weighted average of individual volatilities.
-                        
-                        **3. Below vs. On the Frontier**
-                        
-                        - **On the frontier**: Mean-variance optimal
-                        - **Below the frontier**: Suboptimal (could get more return for same risk)
-                        - **Above the frontier**: Impossible (without new assets or leverage)
-                        
-                        #### The Capital Market Line (CML)
-                        
-                        When you can invest in a **risk-free asset** (like T-bills), the optimal strategy 
-                        becomes a mix of:
-                        - Risk-free asset
-                        - The **tangency portfolio** (max Sharpe on the frontier)
-                        
-                        The CML represents all optimal combinations of these two.
-                        
-                        #### Practical Limitations
-                        
-                        The frontier assumes we **know** true expected returns and covariances. In reality:
-                        - We only have estimates from historical data
-                        - Estimates contain errors that compound during optimization
-                        - "Optimal" portfolios often perform poorly out-of-sample
-                        
-                        This is why robust strategies like **Equal Weight**, **Risk Parity**, and **HRP** 
-                        often outperform theoretically "optimal" portfolios in practice.
-                        
-                        ---
-                        
-                        📖 **Reference**: Markowitz, H. (1952). "Portfolio Selection." *Journal of Finance*, 7(1), 77-91.
-                        """)
+                    **Note**: Some strategies (like HRP, Risk Parity) intentionally sacrifice mean-variance 
+                    efficiency for other benefits like stability and robustness.
+                    """)
                 
-                else:
-                    st.error("❌ Could not calculate efficient frontier. Check your data.")
+                # ============================================================
+                # SECTION 4: EDUCATIONAL CONTENT
+                # ============================================================
+                with st.expander("📚 Understanding the Efficient Frontier"):
+                    st.markdown("""
+                    ### What You're Looking At
+                    
+                    This chart shows the **universe of possible portfolios** you can create with your selected assets:
+                    
+                    - **Gray cloud**: Random portfolios (different weight combinations)
+                    - **Colored curve**: The **efficient frontier** - optimal portfolios
+                    - **Red squares**: Individual assets (100% in one asset)
+                    - **Colored shapes**: Your optimized strategies
+                    
+                    ### Why the Cloud Has This Shape
+                    
+                    The "bullet" or "umbrella" shape emerges from **diversification**:
+                    
+                    1. **Left edge** (low volatility): Dominated by low-risk assets and diversified combinations
+                    2. **Upper edge** (frontier): Best return for each risk level
+                    3. **Interior** (gray): Inefficient - same risk, less return than frontier
+                    4. **Right edge**: Concentrated in high-risk assets
+                    
+                    ### The Efficient Frontier
+                    
+                    Introduced by **Harry Markowitz (1952)**, the frontier answers:
+                    
+                    > "Given I'm willing to accept X% volatility, what's the maximum return I can achieve?"
+                    
+                    Every point on the frontier is **Pareto optimal** - you can't improve return without 
+                    increasing risk, and vice versa.
+                    
+                    ### Why Some Strategies Are "Below" the Frontier
+                    
+                    Strategies like **HRP** and **Risk Parity** may appear suboptimal because:
+                    
+                    1. They optimize for **different objectives** (risk balance, not max Sharpe)
+                    2. They prioritize **stability** over theoretical optimality
+                    3. The frontier assumes **perfect knowledge** of future returns/covariances
+                    
+                    In practice, "suboptimal" robust strategies often **outperform** frontier portfolios 
+                    because the frontier is estimated with error.
+                    
+                    ### The Capital Market Line
+                    
+                    If you can borrow/lend at the risk-free rate, the optimal strategy is:
+                    
+                    1. Hold the **tangency portfolio** (max Sharpe point on frontier)
+                    2. Mix with risk-free asset to achieve desired risk level
+                    
+                    The CML shows all such combinations - it's always **above** the frontier 
+                    (except at the tangency point).
+                    
+                    ---
+                    
+                    📖 **Reference**: Markowitz, H. (1952). "Portfolio Selection." *Journal of Finance*, 7(1), 77-91.
+                    """)
         
         # TAB 7: BENCHMARK (if available)
         if tab8 is not None:
