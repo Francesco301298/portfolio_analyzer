@@ -2309,67 +2309,58 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             'Volatility': roll_vol
                         }).dropna()
                     
-                    col1, col2 = st.columns(2)
+                    # Rolling Returns Chart
+                    st.markdown("##### 📈 Rolling Returns (annualized)")
+                    st.caption(f"Annualized return over {window_years}-year rolling window")
                     
-                    with col1:
-                        st.markdown("##### 📈 Rolling Returns (annualized)")
-                        st.caption(f"Annualized return over {window_years}-year rolling window")
-                        
-                        fig_roll_ret = go.Figure()
-                        
-                        for i, (name, data) in enumerate(rolling_data.items()):
-                            fig_roll_ret.add_trace(go.Scatter(
-                                x=data.index, 
-                                y=data['Return'] * 100, 
-                                name=name,
-                                mode='lines',
-                                line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2),
-                                hovertemplate=f'<b>{name}</b><br>Date: %{{x}}<br>Return: %{{y:.2f}}%<extra></extra>'
-                            ))
-                        
-                        fig_roll_ret.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
-                        fig_roll_ret.update_layout(
-                            height=350, 
-                            hovermode='x unified', 
-                            yaxis_title="Return (%)",
-                            showlegend=False
-                        )
-                        fig_roll_ret = apply_plotly_theme(fig_roll_ret)
-                        st.plotly_chart(fig_roll_ret, use_container_width=True)
+                    fig_roll_ret = go.Figure()
                     
-                    with col2:
-                        st.markdown("##### 📊 Rolling Volatility (annualized)")
-                        st.caption(f"Annualized volatility over {window_years}-year rolling window")
-                        
-                        fig_roll_vol = go.Figure()
-                        
-                        for i, (name, data) in enumerate(rolling_data.items()):
-                            fig_roll_vol.add_trace(go.Scatter(
-                                x=data.index, 
-                                y=data['Volatility'] * 100, 
-                                name=name,
-                                mode='lines',
-                                line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2),
-                                hovertemplate=f'<b>{name}</b><br>Date: %{{x}}<br>Volatility: %{{y:.2f}}%<extra></extra>'
-                            ))
-                        
-                        fig_roll_vol.update_layout(
-                            height=350, 
-                            hovermode='x unified', 
-                            yaxis_title="Volatility (%)",
-                            showlegend=False
-                        )
-                        fig_roll_vol = apply_plotly_theme(fig_roll_vol)
-                        st.plotly_chart(fig_roll_vol, use_container_width=True)
+                    for i, (name, data) in enumerate(rolling_data.items()):
+                        fig_roll_ret.add_trace(go.Scatter(
+                            x=data.index, 
+                            y=data['Return'] * 100, 
+                            name=name,
+                            mode='lines',
+                            line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2.5),
+                            hovertemplate=f'<b>{name}</b><br>Date: %{{x}}<br>Return: %{{y:.2f}}%<extra></extra>'
+                        ))
                     
-                    # Unified legend
-                    st.markdown("**Legend:**")
-                    legend_cols = st.columns(min(len(sel_perf), 4))
-                    for i, p_name in enumerate(sel_perf):
-                        with legend_cols[i % len(legend_cols)]:
-                            color = CHART_COLORS[i % len(CHART_COLORS)]
-                            st.markdown(f"<span style='color:{color}'>●</span> {analyzer.portfolios[p_name]['name']}", 
-                                    unsafe_allow_html=True)
+                    fig_roll_ret.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+                    fig_roll_ret.update_layout(
+                        height=400, 
+                        hovermode='x unified', 
+                        xaxis_title="Date",
+                        yaxis_title="Return (%)",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                    )
+                    fig_roll_ret = apply_plotly_theme(fig_roll_ret)
+                    st.plotly_chart(fig_roll_ret, use_container_width=True)
+                    
+                    # Rolling Volatility Chart
+                    st.markdown("##### 📊 Rolling Volatility (annualized)")
+                    st.caption(f"Annualized volatility over {window_years}-year rolling window")
+                    
+                    fig_roll_vol = go.Figure()
+                    
+                    for i, (name, data) in enumerate(rolling_data.items()):
+                        fig_roll_vol.add_trace(go.Scatter(
+                            x=data.index, 
+                            y=data['Volatility'] * 100, 
+                            name=name,
+                            mode='lines',
+                            line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2.5),
+                            hovertemplate=f'<b>{name}</b><br>Date: %{{x}}<br>Volatility: %{{y:.2f}}%<extra></extra>'
+                        ))
+                    
+                    fig_roll_vol.update_layout(
+                        height=400, 
+                        hovermode='x unified', 
+                        xaxis_title="Date",
+                        yaxis_title="Volatility (%)",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                    )
+                    fig_roll_vol = apply_plotly_theme(fig_roll_vol)
+                    st.plotly_chart(fig_roll_vol, use_container_width=True)
                     
                     st.markdown("---")
                     
@@ -2420,11 +2411,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         
                         Rolling metrics are calculated "looking backward" - the value on December 31, 2023 
                         reflects the previous {window_years} years, it does not predict the future.
-                        """)
-            
-            else:
-                st.warning("⚠️ Select at least one strategy to view the analysis")
-                
+                        """)                
         # TAB 4: DEEP-DIVE STATISTICS (NEW)
         with tab4:
             st.markdown("### 🔬 Deep-dive Statistics")
