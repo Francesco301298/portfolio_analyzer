@@ -370,114 +370,214 @@ class AdvancedPortfolioAnalyzer:
         return self.portfolios['markowitz']
 
     def hierarchical_risk_parity_portfolio(self):
-        """Create HRP portfolio using hierarchical clustering."""
+        """
+        Create HRP portfolio using hierarchical clustering.
+        
+        Implementation based on:
+        López de Prado, M. (2016). "Building Diversified Portfolios that 
+        Outperform Out-of-Sample". Journal of Portfolio Management, 42(4), 59-69.
+        
+        Algorithm:
+        1. Tree Clustering: Compute hierarchical clustering on correlation-based distance
+        2. Quasi-Diagonalization: Reorder covariance matrix to place similar assets together
+        3. Recursive Bisection: Allocate weights using inverse-variance, respecting cluster structure
+        """
         returns_aligned = self.returns.reindex(columns=self.symbols)
         cov_matrix = returns_aligned.cov()
         corr_matrix = returns_aligned.corr()
         
+        # Handle NaN values
         if cov_matrix.isnull().any().any():
             cov_matrix = cov_matrix.fillna(0)
         if corr_matrix.isnull().any().any():
             corr_matrix = corr_matrix.fillna(0)
         
-        np.fill_diagonal(corr_matrix.values, 1)
+        # Ensure diagonal is 1 for correlation matrix
+        np.fill_diagonal(corr_matrix.values, 1.0)
         
-        distance_matrix = np.sqrt((1 - corr_matrix) / 2)
+        # Step 1: Compute distance matrix
+        # López de Prado (2016), Eq. 2: d_ij = sqrt(0.5 * (1 - rho_ij))
+        # This transforms correlation to a proper distance metric in [0, 1]
+        distance_matrix = np.sqrt(0.5 * (1 - corr_matrix))
+        np.fill_diagonal(distance_matrix.values, 0)  # Distance to self is 0
         
         try:
+            # Convert to condensed form for scipy (upper triangle, no diagonal)
             dist_condensed = squareform(distance_matrix.values, checks=False)
-            link = linkage(dist_condensed, method='ward')
-        except Exception:
+            
+            # Step 2: Hierarchical clustering
+            # 'single' linkage is recommended by López de Prado for correlation-based distances
+            # It preserves the ultrametric property better than 'ward'
+            link = linkage(dist_condensed, method='single')
+            
+        except Exception as e:
+            # Fallback to equal weights if clustering fails
             n = len(self.symbols)
             weights = np.array([1/n] * n)
-            self.portfolios['hrp'] = self._calculate_portfolio_performance(weights, "HRP")
+            self.portfolios['hrp'] = self._calculate_portfolio_performance(weights, "Hierarchical Risk Parity")
             return self.portfolios['hrp']
         
+        # Step 3: Quasi-diagonalization (reorder assets)
         sort_idx = self._get_quasi_diag(link)
-        weights = self._get_rec_bipart(cov_matrix, sort_idx)
+        sorted_symbols = [self.symbols[i] for i in sort_idx]
         
+        # Reorder covariance matrix
+        cov_sorted = cov_matrix.loc[sorted_symbols, sorted_symbols]
+        
+        # Step 4: Recursive bisection
+        weights = self._get_rec_bipart_hrp(cov_sorted, sorted_symbols)
+        
+        # Reindex to original symbol order and normalize
+        weights = weights.reindex(self.symbols)
         weights = weights / weights.sum()
         
         self.portfolios['hrp'] = self._calculate_portfolio_performance(
             weights.values, "Hierarchical Risk Parity")
         return self.portfolios['hrp']
 
-    def _get_quasi_diag(self, link):
-        """Reorganize covariance matrix to quasi-diagonal form."""
-        link = link.astype(int)
-        sort_idx = pd.Series([link[-1, 0], link[-1, 1]])
-        num_items = link[-1, 3]
 
-        while sort_idx.max() >= num_items:
-            sort_idx.index = range(0, sort_idx.shape[0] * 2, 2)
-            df0 = sort_idx[sort_idx >= num_items]
-            i = df0.index
-            j = df0.values - num_items
+    def _get_quasi_diag(self, link):
+        """
+        Quasi-diagonalization: reorder matrix so similar items are placed together.
+        
+        This implements the seriation algorithm from López de Prado (2016).
+        The output is an ordered list of original indices that places correlated
+        assets adjacent to each other.
+        
+        Parameters:
+        -----------
+        link : ndarray
+            Linkage matrix from scipy.cluster.hierarchy.linkage
+            
+        Returns:
+        --------
+        list : Ordered indices of assets
+        """
+        link = link.astype(int)
+        n = link[-1, 3]  # Number of original items
+        
+        # Initialize: start with the two children of the root
+        sort_idx = pd.Series([link[-1, 0], link[-1, 1]])
+        
+        # Iteratively replace cluster indices with their children
+        while sort_idx.max() >= n:
+            sort_idx.index = range(0, sort_idx.shape[0] * 2, 2)  # Make room for expansion
+            
+            # Find indices that are clusters (not original items)
+            clusters = sort_idx[sort_idx >= n]
+            i = clusters.index
+            j = clusters.values - n  # Convert to linkage matrix row index
+            
+            # Replace cluster with its left child
             sort_idx[i] = link[j, 0]
-            df0 = pd.Series(link[j, 1], index=i + 1)
-            sort_idx = pd.concat([sort_idx, df0])
+            
+            # Insert right child
+            right_children = pd.Series(link[j, 1], index=i + 1)
+            sort_idx = pd.concat([sort_idx, right_children])
             sort_idx = sort_idx.sort_index()
             sort_idx.index = range(sort_idx.shape[0])
-
+        
         return sort_idx.tolist()
 
-    def _get_rec_bipart(self, cov, sort_idx):
-        """Calculate HRP weights using recursive bisection."""
-        sort_idx_symbols = [self.symbols[i] for i in sort_idx]
-        weights = pd.Series(1, index=sort_idx_symbols)
-        clustered_alphas = [sort_idx_symbols]
+    def _get_rec_bipart_hrp(self, cov, sorted_symbols):
+            """
+            Recursive bisection for HRP weight allocation.
+            
+            This implements the core HRP algorithm from López de Prado (2016):
+            1. Start with the full list of (sorted) assets
+            2. Split into two halves
+            3. Compute variance of each half using inverse-variance weights
+            4. Allocate between halves inversely proportional to variance
+            5. Recurse on each half
+            
+            Parameters:
+            -----------
+            cov : pd.DataFrame
+                Covariance matrix (sorted by quasi-diagonalization)
+            sorted_symbols : list
+                Asset symbols in quasi-diagonal order
+                
+            Returns:
+            --------
+            pd.Series : Portfolio weights indexed by symbol
+            """
+            weights = pd.Series(1.0, index=sorted_symbols)
+            
+            # List of clusters to process (start with all assets as one cluster)
+            clusters = [sorted_symbols]
+            
+            while len(clusters) > 0:
+                # Split each cluster in half
+                new_clusters = []
+                
+                for cluster in clusters:
+                    if len(cluster) > 1:
+                        # Split at midpoint (respecting quasi-diagonal order)
+                        mid = len(cluster) // 2
+                        left = cluster[:mid]
+                        right = cluster[mid:]
+                        
+                        # Compute cluster variances using inverse-variance allocation
+                        var_left = self._get_cluster_variance(cov, left)
+                        var_right = self._get_cluster_variance(cov, right)
+                        
+                        # Allocate weight inversely proportional to variance
+                        # alpha is the weight for the LEFT cluster
+                        if var_left + var_right > 0:
+                            alpha = 1 - var_left / (var_left + var_right)
+                        else:
+                            alpha = 0.5
+                        
+                        # Update weights
+                        weights[left] *= alpha
+                        weights[right] *= (1 - alpha)
+                        
+                        # Add to next iteration if more than 1 asset
+                        if len(left) > 1:
+                            new_clusters.append(left)
+                        if len(right) > 1:
+                            new_clusters.append(right)
+                
+                clusters = new_clusters
+            
+            return weights
 
-        while len(clustered_alphas) > 0:
-            new_clusters = []
-            for cluster in clustered_alphas:
-                N = len(cluster)
-                if N > 1:
-                    split = N // 2
-                    new_clusters.append(cluster[:split])
-                    new_clusters.append(cluster[split:])
-
-            if not new_clusters:
-                break
-
-            clustered_alphas = new_clusters
-
-            if len(clustered_alphas) < 2:
-                break
-
-            for i in range(0, len(clustered_alphas) - 1, 2):
-                if i + 1 >= len(clustered_alphas):
-                    break
-
-                cluster0 = clustered_alphas[i]
-                cluster1 = clustered_alphas[i+1]
-
-                try:
-                    cov0 = cov.loc[cluster0, cluster0]
-                    cov1 = cov.loc[cluster1, cluster1]
-
-                    ivp0 = 1. / np.diag(cov0)
-                    ivp1 = 1. / np.diag(cov1)
-
-                    alpha0 = ivp0 / ivp0.sum()
-                    alpha1 = ivp1 / ivp1.sum()
-
-                    var0 = np.dot(alpha0, np.dot(cov0, alpha0))
-                    var1 = np.dot(alpha1, np.dot(cov1, alpha1))
-
-                    if (var0 + var1) == 0:
-                        alpha = 0.5
-                    else:
-                        alpha = 1 - var0 / (var0 + var1)
-
-                    weights[cluster0] *= alpha
-                    weights[cluster1] *= 1 - alpha
-
-                except (KeyError, IndexError, ZeroDivisionError):
-                    weights[cluster0] *= 0.5
-                    weights[cluster1] *= 0.5
-
-        return weights.reindex(self.symbols)
-
+    def _get_cluster_variance(self, cov, cluster_assets):
+        """
+        Compute the variance of a cluster using inverse-variance portfolio.
+        
+        This is the key insight of HRP: within each cluster, we use
+        inverse-variance weights (which is optimal for uncorrelated assets).
+        
+        Parameters:
+        -----------
+        cov : pd.DataFrame
+            Full covariance matrix
+        cluster_assets : list
+            List of asset symbols in this cluster
+            
+        Returns:
+        --------
+        float : Variance of the inverse-variance weighted cluster portfolio
+        """
+        # Extract sub-covariance matrix for this cluster
+        cov_cluster = cov.loc[cluster_assets, cluster_assets]
+        
+        # Inverse-variance weights within cluster
+        # w_i = (1/sigma_i^2) / sum(1/sigma_j^2)
+        variances = np.diag(cov_cluster)
+        
+        # Handle zero or negative variances
+        variances = np.maximum(variances, 1e-10)
+        
+        inv_var = 1.0 / variances
+        ivp_weights = inv_var / inv_var.sum()
+        
+        # Cluster variance = w' * Cov * w
+        cluster_var = np.dot(ivp_weights, np.dot(cov_cluster.values, ivp_weights))
+        
+        return cluster_var
+    
     def build_all_portfolios(self):
         """Build all portfolio types (7 strategies, no Black-Litterman)."""
         if self.returns is None:
