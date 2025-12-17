@@ -2104,22 +2104,21 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 4. Re-run the analysis
                 """)
 
-        # TAB 3: PERFORMANCE (UNIFIED - sostituisce i vecchi Performance + Rolling)
         with tab3:
             st.markdown("### 📈 Performance Analysis")
             
             st.markdown("""
-            Questa sezione analizza le performance delle strategie selezionate da diverse angolazioni:
-            la crescita cumulata del capitale, le fasi di perdita (drawdown), e la consistenza 
-            dei rendimenti e della volatilità nel tempo attraverso finestre mobili.
+            This section analyzes the performance of selected strategies from different angles:
+            cumulative capital growth, drawdown phases, and the consistency of returns 
+            and volatility over time through rolling windows.
             """)
             
             st.markdown("---")
             
-            # Strategy selector (used for all charts in this tab)
+            # Strategy selector
             portfolio_keys = list(analyzer.portfolios.keys())
             sel_perf = st.multiselect(
-                "Seleziona le strategie da confrontare", 
+                "Select strategies to compare", 
                 portfolio_keys, 
                 default=portfolio_keys[:4], 
                 format_func=lambda x: analyzer.portfolios[x]['name'], 
@@ -2130,14 +2129,13 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 # ============================================================
                 # SECTION 1: CUMULATIVE PERFORMANCE
                 # ============================================================
-                st.markdown("#### 📊 Crescita del Capitale (Base 100)")
+                st.markdown("#### 📊 Capital Growth (Base 100)")
                 
                 st.markdown("""
                 <div class='dashboard-card'>
-                <p><strong>Come leggere questo grafico:</strong> mostra come sarebbe cresciuto un investimento 
-                iniziale di 100€ nel tempo per ogni strategia. Una linea che arriva a 150 significa 
-                che il capitale è cresciuto del 50%. Più la linea è ripida verso l'alto, migliore è stata 
-                la performance in quel periodo.</p>
+                <p><strong>How to read this chart:</strong> it shows how an initial investment of 100 
+                would have grown over time for each strategy. A line reaching 150 means the capital 
+                grew by 50%. The steeper the upward slope, the better the performance during that period.</p>
                 </div>
                 """, unsafe_allow_html=True)
                 
@@ -2153,24 +2151,23 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         name=p['name'], 
                         mode='lines',
                         line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2.5),
-                        hovertemplate=f'<b>{p["name"]}</b><br>Data: %{{x}}<br>Valore: %{{y:.2f}}<extra></extra>'
+                        hovertemplate=f'<b>{p["name"]}</b><br>Date: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>'
                     ))
                 
-                # Add reference line at 100
                 fig_cum.add_hline(y=100, line_dash="dash", line_color="rgba(255,255,255,0.3)", 
-                                annotation_text="Capitale iniziale", annotation_position="right")
+                                annotation_text="Initial capital", annotation_position="right")
                 
                 fig_cum.update_layout(
                     height=420, 
                     hovermode='x unified', 
-                    xaxis_title="Data", 
-                    yaxis_title="Valore (Base 100)",
+                    xaxis_title="Date", 
+                    yaxis_title="Value (Base 100)",
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
                 )
                 fig_cum = apply_plotly_theme(fig_cum)
                 st.plotly_chart(fig_cum, use_container_width=True)
                 
-                # Summary metrics for cumulative performance
+                # Summary metrics
                 col1, col2, col3, col4 = st.columns(4)
                 
                 perf_data = [(p_name, analyzer.portfolios[p_name]) for p_name in sel_perf]
@@ -2179,35 +2176,35 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 
                 with col1:
                     st.metric(
-                        "🏆 Miglior Performance", 
+                        "🏆 Best Performance", 
                         best_cum[1]['name'].split()[0],
                         f"+{best_cum[1]['cumulative_return']*100:.1f}%"
                     )
                 with col2:
                     st.metric(
-                        "📉 Peggior Performance", 
+                        "📉 Worst Performance", 
                         worst_cum[1]['name'].split()[0],
                         f"{worst_cum[1]['cumulative_return']*100:+.1f}%"
                     )
                 with col3:
                     avg_return = np.mean([analyzer.portfolios[p]['annualized_return'] for p in sel_perf])
-                    st.metric("📊 Rendimento Medio", f"{avg_return*100:.1f}%", "annualizzato")
+                    st.metric("📊 Average Return", f"{avg_return*100:.1f}%", "annualized")
                 with col4:
-                    st.metric("📅 Periodo", f"{len(analyzer.returns)} giorni")
+                    st.metric("📅 Period", f"{len(analyzer.returns)} days")
                 
                 st.markdown("---")
                 
                 # ============================================================
                 # SECTION 2: DRAWDOWN ANALYSIS
                 # ============================================================
-                st.markdown("#### 📉 Analisi dei Drawdown")
+                st.markdown("#### 📉 Drawdown Analysis")
                 
                 st.markdown("""
                 <div class='dashboard-card'>
-                <p><strong>Come leggere questo grafico:</strong> il drawdown misura quanto il portafoglio 
-                è sceso rispetto al suo massimo storico. Un drawdown del -20% significa che in quel momento 
-                avevi perso il 20% dal picco. È una misura del "dolore" dell'investimento: drawdown profondi 
-                e prolungati sono psicologicamente difficili da sopportare.</p>
+                <p><strong>How to read this chart:</strong> drawdown measures how much the portfolio 
+                has declined from its historical peak. A drawdown of -20% means that at that moment 
+                you had lost 20% from the peak. It's a measure of investment "pain": deep and prolonged 
+                drawdowns are psychologically difficult to endure.</p>
                 </div>
                 """, unsafe_allow_html=True)
                 
@@ -2230,13 +2227,13 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         line=dict(color=color, width=2), 
                         fill='tozeroy', 
                         fillcolor=f'rgba({r},{g},{b},0.2)',
-                        hovertemplate=f'<b>{p["name"]}</b><br>Data: %{{x}}<br>Drawdown: %{{y:.2f}}%<extra></extra>'
+                        hovertemplate=f'<b>{p["name"]}</b><br>Date: %{{x}}<br>Drawdown: %{{y:.2f}}%<extra></extra>'
                     ))
                 
                 fig_dd.update_layout(
                     height=350, 
                     hovermode='x unified', 
-                    xaxis_title="Data", 
+                    xaxis_title="Date", 
                     yaxis_title="Drawdown (%)",
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
                 )
@@ -2251,11 +2248,9 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     roll_max = cum_val.expanding().max()
                     dd_series = (cum_val - roll_max) / roll_max
                     
-                    # Find max drawdown details
                     max_dd_idx = dd_series.idxmin()
                     max_dd_val = dd_series.min()
                     
-                    # Find recovery time (if recovered)
                     post_dd = cum_val[cum_val.index >= max_dd_idx]
                     peak_before_dd = roll_max[max_dd_idx]
                     recovered = post_dd[post_dd >= peak_before_dd]
@@ -2263,54 +2258,50 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     if len(recovered) > 0:
                         recovery_date = recovered.index[0]
                         recovery_days = (recovery_date - max_dd_idx).days
-                        recovery_str = f"{recovery_days} giorni"
+                        recovery_str = f"{recovery_days} days"
                     else:
-                        recovery_str = "Non recuperato"
+                        recovery_str = "Not recovered"
                     
                     dd_summary.append({
-                        'Strategia': p['name'],
+                        'Strategy': p['name'],
                         'Max Drawdown': f"{max_dd_val*100:.2f}%",
-                        'Data Max DD': max_dd_idx.strftime('%Y-%m-%d'),
-                        'Tempo di Recupero': recovery_str
+                        'Max DD Date': max_dd_idx.strftime('%Y-%m-%d'),
+                        'Recovery Time': recovery_str
                     })
                 
-                st.markdown(create_styled_table(pd.DataFrame(dd_summary), "Riepilogo Drawdown"), unsafe_allow_html=True)
+                st.markdown(create_styled_table(pd.DataFrame(dd_summary), "Drawdown Summary"), unsafe_allow_html=True)
                 
                 st.markdown("---")
                 
                 # ============================================================
                 # SECTION 3: ROLLING ANALYSIS
                 # ============================================================
-                st.markdown("#### 🔄 Analisi Rolling (Finestre Mobili)")
+                st.markdown("#### 🔄 Rolling Analysis (Moving Windows)")
                 
                 st.markdown(f"""
                 <div class='dashboard-card'>
-                <p><strong>Cosa sono le metriche rolling?</strong> Invece di calcolare un singolo numero per tutto 
-                il periodo, le metriche rolling calcolano il valore su una "finestra" mobile di <strong>{window_years} anni</strong> 
-                che scorre nel tempo. Questo mostra come la performance e il rischio sono cambiati nelle diverse 
-                fasi di mercato, rivelando se una strategia è consistente o se ha funzionato solo in certi periodi.</p>
+                <p><strong>What are rolling metrics?</strong> Instead of calculating a single number for the entire 
+                period, rolling metrics calculate values over a moving "window" of <strong>{window_years} years</strong> 
+                that slides through time. This shows how performance and risk have changed across different 
+                market phases, revealing whether a strategy is consistent or only worked in certain periods.</p>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Check if we have enough data for rolling analysis
                 window = window_years * 252
                 
                 if len(analyzer.returns) < window:
-                    st.warning(f"⚠️ Dati insufficienti per l'analisi rolling. Servono almeno {window_years} anni di dati ({window} giorni), ma ne hai solo {len(analyzer.returns)}.")
+                    st.warning(f"⚠️ Insufficient data for rolling analysis. At least {window_years} years of data ({window} days) required, but only {len(analyzer.returns)} available.")
                 else:
-                    # Calculate rolling metrics for all selected portfolios
                     rolling_data = {}
                     
                     for p_name in sel_perf:
                         p = analyzer.portfolios[p_name]
                         rets = p['returns']
                         
-                        # Rolling annualized return
                         roll_ret = rets.rolling(window=window).apply(
                             lambda x: (1 + x).prod() ** (252 / len(x)) - 1 if len(x) == window else np.nan
                         )
                         
-                        # Rolling annualized volatility
                         roll_vol = rets.rolling(window=window).std() * np.sqrt(252)
                         
                         rolling_data[p['name']] = pd.DataFrame({
@@ -2318,12 +2309,11 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             'Volatility': roll_vol
                         }).dropna()
                     
-                    # Create two columns for the rolling charts
                     col1, col2 = st.columns(2)
                     
                     with col1:
-                        st.markdown("##### 📈 Rolling Returns (annualizzati)")
-                        st.caption(f"Rendimento annualizzato su finestra mobile di {window_years} anni")
+                        st.markdown("##### 📈 Rolling Returns (annualized)")
+                        st.caption(f"Annualized return over {window_years}-year rolling window")
                         
                         fig_roll_ret = go.Figure()
                         
@@ -2334,22 +2324,22 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                                 name=name,
                                 mode='lines',
                                 line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2),
-                                hovertemplate=f'<b>{name}</b><br>Data: %{{x}}<br>Return: %{{y:.2f}}%<extra></extra>'
+                                hovertemplate=f'<b>{name}</b><br>Date: %{{x}}<br>Return: %{{y:.2f}}%<extra></extra>'
                             ))
                         
                         fig_roll_ret.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
                         fig_roll_ret.update_layout(
                             height=350, 
                             hovermode='x unified', 
-                            yaxis_title="Rendimento (%)",
+                            yaxis_title="Return (%)",
                             showlegend=False
                         )
                         fig_roll_ret = apply_plotly_theme(fig_roll_ret)
                         st.plotly_chart(fig_roll_ret, use_container_width=True)
                     
                     with col2:
-                        st.markdown("##### 📊 Rolling Volatility (annualizzata)")
-                        st.caption(f"Volatilità annualizzata su finestra mobile di {window_years} anni")
+                        st.markdown("##### 📊 Rolling Volatility (annualized)")
+                        st.caption(f"Annualized volatility over {window_years}-year rolling window")
                         
                         fig_roll_vol = go.Figure()
                         
@@ -2360,20 +2350,20 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                                 name=name,
                                 mode='lines',
                                 line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2),
-                                hovertemplate=f'<b>{name}</b><br>Data: %{{x}}<br>Volatilità: %{{y:.2f}}%<extra></extra>'
+                                hovertemplate=f'<b>{name}</b><br>Date: %{{x}}<br>Volatility: %{{y:.2f}}%<extra></extra>'
                             ))
                         
                         fig_roll_vol.update_layout(
                             height=350, 
                             hovermode='x unified', 
-                            yaxis_title="Volatilità (%)",
+                            yaxis_title="Volatility (%)",
                             showlegend=False
                         )
                         fig_roll_vol = apply_plotly_theme(fig_roll_vol)
                         st.plotly_chart(fig_roll_vol, use_container_width=True)
                     
-                    # Unified legend below both charts
-                    st.markdown("**Legenda:**")
+                    # Unified legend
+                    st.markdown("**Legend:**")
                     legend_cols = st.columns(min(len(sel_perf), 4))
                     for i, p_name in enumerate(sel_perf):
                         with legend_cols[i % len(legend_cols)]:
@@ -2384,7 +2374,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     st.markdown("---")
                     
                     # Rolling statistics summary
-                    st.markdown("##### 📋 Statistiche Rolling")
+                    st.markdown("##### 📋 Rolling Statistics")
                     
                     rolling_stats = []
                     for p_name in sel_perf:
@@ -2393,48 +2383,48 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             data = rolling_data[p['name']]
                             
                             rolling_stats.append({
-                                'Strategia': p['name'],
-                                'Return Medio': f"{data['Return'].mean()*100:.2f}%",
-                                'Return Min': f"{data['Return'].min()*100:.2f}%",
-                                'Return Max': f"{data['Return'].max()*100:.2f}%",
-                                'Vol Media': f"{data['Volatility'].mean()*100:.2f}%",
-                                'Vol Min': f"{data['Volatility'].min()*100:.2f}%",
-                                'Vol Max': f"{data['Volatility'].max()*100:.2f}%"
+                                'Strategy': p['name'],
+                                'Avg Return': f"{data['Return'].mean()*100:.2f}%",
+                                'Min Return': f"{data['Return'].min()*100:.2f}%",
+                                'Max Return': f"{data['Return'].max()*100:.2f}%",
+                                'Avg Vol': f"{data['Volatility'].mean()*100:.2f}%",
+                                'Min Vol': f"{data['Volatility'].min()*100:.2f}%",
+                                'Max Vol': f"{data['Volatility'].max()*100:.2f}%"
                             })
                     
                     if rolling_stats:
-                        st.markdown(create_styled_table(pd.DataFrame(rolling_stats), f"Statistiche su finestra di {window_years} anni"), unsafe_allow_html=True)
+                        st.markdown(create_styled_table(pd.DataFrame(rolling_stats), f"Statistics over {window_years}-year window"), unsafe_allow_html=True)
                     
-                    # Interpretation help
-                    with st.expander("📖 Come interpretare l'analisi rolling"):
+                    with st.expander("📖 How to interpret rolling analysis"):
                         st.markdown(f"""
-                        ### Cosa cercare nei grafici rolling
+                        ### What to look for in rolling charts
                         
                         **Rolling Returns:**
-                        - Linee stabili sopra lo zero = performance consistente nel tempo
-                        - Forte variabilità = la strategia funziona solo in certi regimi di mercato
-                        - Periodi prolungati sotto zero = fasi difficili da sopportare psicologicamente
+                        - Stable lines above zero = consistent performance over time
+                        - High variability = the strategy only works in certain market regimes
+                        - Prolonged periods below zero = phases that are psychologically difficult to endure
                         
                         **Rolling Volatility:**
-                        - Linee piatte = rischio prevedibile e stabile
-                        - Picchi improvvisi = la strategia diventa più rischiosa in periodi di stress
-                        - Volatilità crescente nel tempo = potenziale segnale di allarme
+                        - Flat lines = predictable and stable risk
+                        - Sudden spikes = the strategy becomes riskier during stress periods
+                        - Increasing volatility over time = potential warning signal
                         
-                        ### Confronto tra strategie
+                        ### Comparing strategies
                         
-                        Una strategia ideale mostra:
-                        - Rolling returns consistentemente positivi
-                        - Rolling volatility stabile e contenuta
-                        - Poca correlazione tra i picchi di volatilità e i cali di rendimento
+                        An ideal strategy shows:
+                        - Consistently positive rolling returns
+                        - Stable and contained rolling volatility
+                        - Low correlation between volatility spikes and return drops
                         
-                        ### Attenzione
+                        ### Important note
                         
-                        Le metriche rolling sono calcolate "guardando indietro" - il valore al 31 dicembre 2023 
-                        riflette i {window_years} anni precedenti, non prevede il futuro.
+                        Rolling metrics are calculated "looking backward" - the value on December 31, 2023 
+                        reflects the previous {window_years} years, it does not predict the future.
                         """)
             
             else:
-                st.warning("⚠️ Seleziona almeno una strategia per visualizzare l'analisi")        
+                st.warning("⚠️ Select at least one strategy to view the analysis")
+                
         # TAB 4: DEEP-DIVE STATISTICS (NEW)
         with tab4:
             st.markdown("### 🔬 Deep-dive Statistics")
