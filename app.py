@@ -2089,7 +2089,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 
                 First, we measure how "similar" each pair of assets is based on their correlation. 
                 Assets that move together (high correlation) are considered similar. We then build 
-                a family tree (dendrogram) where similar assets are grouped together.
+                a tree (dendrogram) where similar assets are grouped together.
                 
                 The distance between assets is calculated as:
                 
@@ -2099,13 +2099,14 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 
                 **Step 2: Quasi-Diagonalization**
                 
-                We reorder the assets so that similar ones are next to each other. Imagine rearranging 
-                seats at a dinner party so that people who get along well sit together.
+                We reorganize the assets in the correlation matrix so that the largest correlations lie around the diagonal. 
+                This way, assets will end up close to those similar to them 
+                and far apart from very different ones and we will be able to visualize the clusters in a correlation matrix
                 
                 **Step 3: Recursive Bisection**
                 
                 Finally, we allocate weights by repeatedly splitting the portfolio in half and giving 
-                more weight to the "safer" (lower variance) half. This continues until each asset 
+                more weight to the lower variance half. This continues until each asset 
                 has its final weight.
                 
                 The allocation formula at each split is:
@@ -2116,7 +2117,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 """)
                 
                 st.markdown("---")
-                st.markdown("### 📊 Dendrogram: Your Portfolio's Family Tree")
+                st.markdown("### 📊 Dendrogram: Your Portfolio's Tree")
                 st.markdown("""
                 The dendrogram below shows how assets in your portfolio are related. Assets that are 
                 connected at lower heights are more similar (higher correlation). The structure reveals 
@@ -2350,7 +2351,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     The dendrogram visualization requires the scipy library. 
                     The HRP optimization still works, but the visual breakdown is unavailable.
                     """)
-        
+        # ============== TAB 3 ============== #
         with tab3:
             st.markdown("### 📈 Performance Analysis")
             
