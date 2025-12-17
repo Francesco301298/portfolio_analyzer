@@ -3963,36 +3963,413 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
 
         # TAB 6: FRONTIER
         with tab6:
-            st.markdown("### 📐 Efficient Frontier")
+            st.markdown("### 📐 Efficient Frontier & Uncertainty Analysis")
             
-            with st.spinner("Calculating..."):
-                frontier_df = analyzer.get_efficient_frontier(n_points=50)
+            st.markdown("""
+            This section visualizes the **efficient frontier** - the set of portfolios that maximize return 
+            for each level of risk. Unlike traditional plots, we also show **uncertainty clouds** to represent 
+            estimation error.
+            """)
+            
+            # Configuration
+            col1, col2 = st.columns(2)
+            with col1:
+                n_frontier_points = st.slider("Frontier resolution", 20, 100, 50, key="n_frontier")
+                show_scenarios = st.checkbox("Show uncertainty scenarios", value=True, key="show_scenarios")
+            with col2:
+                n_scenarios = st.slider("Number of scenarios", 50, 500, 200, key="n_scenarios") if show_scenarios else 0
+                show_cml = st.checkbox("Show Capital Market Line", value=True, key="show_cml")
+            
+            with st.spinner("Calculating efficient frontier..."):
+                # Get base efficient frontier
+                frontier_df = analyzer.get_efficient_frontier(n_points=n_frontier_points)
                 
                 if not frontier_df.empty:
+                    # ===== SCENARIO GENERATION (Bayesian approach) =====
+                    scenarios_data = None
+                    
+                    if show_scenarios and n_scenarios > 0:
+                        with st.spinner("Generating uncertainty scenarios..."):
+                            # Extract sample statistics
+                            returns_aligned = analyzer.returns.reindex(columns=analyzer.symbols)
+                            mu_sample = returns_aligned.mean() * 252
+                            sigma2_sample = returns_aligned.cov() * 252
+                            n_obs = len(returns_aligned)
+                            
+                            # Bayesian shrinkage parameters
+                            # These control how much we trust sample estimates vs. priors
+                            gamma_mu = 0.3  # Higher = more shrinkage toward prior mean
+                            gamma_sig = 0.2  # Higher = more shrinkage toward prior covariance
+                            
+                            # Prior: equal-weighted portfolio characteristics
+                            n_assets = len(analyzer.symbols)
+                            w_equal = np.ones(n_assets) / n_assets
+                            
+                            # Prior mean: implied from equal-weighted portfolio
+                            mu_prior = np.array([mu_sample.mean()] * n_assets)
+                            
+                            # Prior covariance: constant correlation model
+                            avg_var = np.mean(np.diag(sigma2_sample))
+                            avg_corr = 0.3  # Assume moderate correlation
+                            sigma2_prior = np.eye(n_assets) * avg_var
+                            for i in range(n_assets):
+                                for j in range(i+1, n_assets):
+                                    sigma2_prior[i, j] = sigma2_prior[j, i] = avg_corr * avg_var
+                            
+                            # Generate scenarios using posterior distribution
+                            scenarios_vol = []
+                            scenarios_ret = []
+                            
+                            np.random.seed(42)  # Reproducibility
+                            
+                            for _ in range(n_scenarios):
+                                # Sample from Wishart distribution for covariance
+                                # This accounts for covariance estimation uncertainty
+                                try:
+                                    from scipy.stats import wishart
+                                    df = max(n_obs - n_assets, n_assets + 1)
+                                    sigma2_scenario = wishart.rvs(df=df, scale=sigma2_sample/df, size=1)
+                                except:
+                                    # Fallback: add noise to sample covariance
+                                    noise = np.random.randn(n_assets, n_assets) * 0.01
+                                    noise = (noise + noise.T) / 2
+                                    sigma2_scenario = sigma2_sample + noise
+                                
+                                # Sample mean with uncertainty (Normal distribution)
+                                # Variance of sample mean = sigma^2 / n
+                                mu_std = np.sqrt(np.diag(sigma2_sample) / n_obs)
+                                mu_scenario = np.random.normal(mu_sample, mu_std * 0.5)
+                                
+                                # Apply Bayesian shrinkage
+                                mu_posterior = gamma_mu * mu_prior + (1 - gamma_mu) * mu_scenario
+                                sigma2_posterior = gamma_sig * sigma2_prior + (1 - gamma_sig) * sigma2_scenario
+                                
+                                # Ensure positive definite
+                                eigenvalues = np.linalg.eigvals(sigma2_posterior)
+                                if np.any(eigenvalues <= 0):
+                                    sigma2_posterior = sigma2_posterior + np.eye(n_assets) * 1e-6
+                                
+                                # Optimize for this scenario
+                                try:
+                                    def portfolio_variance(w):
+                                        return np.dot(w.T, np.dot(sigma2_posterior, w))
+                                    
+                                    def portfolio_return(w):
+                                        return np.dot(w, mu_posterior)
+                                    
+                                    # Random target return within feasible range
+                                    min_ret = mu_posterior.min()
+                                    max_ret = mu_posterior.max()
+                                    target_ret = np.random.uniform(min_ret, max_ret)
+                                    
+                                    constraints = [
+                                        {'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
+                                        {'type': 'eq', 'fun': lambda x: portfolio_return(x) - target_ret}
+                                    ]
+                                    bounds = tuple((0, 1) for _ in range(n_assets))
+                                    initial_guess = np.ones(n_assets) / n_assets
+                                    
+                                    result = minimize(
+                                        portfolio_variance,
+                                        initial_guess,
+                                        method='SLSQP',
+                                        bounds=bounds,
+                                        constraints=constraints,
+                                        options={'ftol': 1e-9, 'maxiter': 500}
+                                    )
+                                    
+                                    if result.success:
+                                        vol = np.sqrt(result.fun)
+                                        ret = target_ret
+                                        scenarios_vol.append(vol)
+                                        scenarios_ret.append(ret)
+                                except:
+                                    continue
+                            
+                            if len(scenarios_vol) > 0:
+                                scenarios_data = {
+                                    'volatility': np.array(scenarios_vol),
+                                    'return': np.array(scenarios_ret)
+                                }
+                    
+                    # ===== MAIN PLOT =====
                     fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=frontier_df['Volatility']*100, y=frontier_df['Return']*100, mode='lines', name='Frontier',
-                        line=dict(color='#FFE66D', width=4), hovertemplate='Vol: %{x:.2f}%<br>Return: %{y:.2f}%<extra></extra>'))
                     
+                    # 1. Uncertainty scenarios (background cloud)
+                    if scenarios_data is not None:
+                        fig.add_trace(go.Scatter(
+                            x=scenarios_data['volatility'] * 100,
+                            y=scenarios_data['return'] * 100,
+                            mode='markers',
+                            name='Uncertainty Scenarios',
+                            marker=dict(
+                                size=4,
+                                color='rgba(200, 200, 200, 0.3)',
+                                symbol='circle'
+                            ),
+                            hovertemplate='Scenario<br>Vol: %{x:.2f}%<br>Return: %{y:.2f}%<extra></extra>',
+                            showlegend=True
+                        ))
+                        
+                        st.caption(f"✅ Generated {len(scenarios_data['volatility'])} scenarios using Bayesian posterior sampling")
+                    
+                    # 2. Efficient Frontier (main line)
+                    fig.add_trace(go.Scatter(
+                        x=frontier_df['Volatility'] * 100,
+                        y=frontier_df['Return'] * 100,
+                        mode='lines',
+                        name='Efficient Frontier',
+                        line=dict(color='#FFE66D', width=4),
+                        hovertemplate='Frontier<br>Vol: %{x:.2f}%<br>Return: %{y:.2f}%<extra></extra>'
+                    ))
+                    
+                    # 3. Portfolio points
                     for i, (p_name, p) in enumerate(analyzer.portfolios.items()):
-                        fig.add_trace(go.Scatter(x=[p['annualized_volatility']*100], y=[p['annualized_return']*100], mode='markers+text', name=p['name'],
-                            marker=dict(size=14, color=CHART_COLORS[i % len(CHART_COLORS)], symbol='diamond', line=dict(width=2, color='white')),
-                            text=[p['name'].split()[0]], textposition='top center', textfont=dict(color='#E2E8F0', size=9),
-                            hovertemplate=f"<b>{p['name']}</b><br>Return: %{{y:.2f}}%<br>Vol: %{{x:.2f}}%<extra></extra>"))
+                        # Different markers for different portfolio types
+                        marker_symbol = 'diamond' if 'sharpe' in p_name.lower() else 'circle'
+                        marker_size = 16 if 'sharpe' in p_name.lower() else 14
+                        
+                        fig.add_trace(go.Scatter(
+                            x=[p['annualized_volatility'] * 100],
+                            y=[p['annualized_return'] * 100],
+                            mode='markers+text',
+                            name=p['name'],
+                            marker=dict(
+                                size=marker_size,
+                                color=CHART_COLORS[i % len(CHART_COLORS)],
+                                symbol=marker_symbol,
+                                line=dict(width=2, color='white')
+                            ),
+                            text=[p['name'].split()[0]],
+                            textposition='top center',
+                            textfont=dict(color='#E2E8F0', size=9, family='Inter'),
+                            hovertemplate=f"<b>{p['name']}</b><br>Return: %{{y:.2f}}%<br>Vol: %{{x:.2f}}%<br>Sharpe: {p['sharpe_ratio']:.3f}<extra></extra>"
+                        ))
                     
-                    max_sharpe_p = max(analyzer.portfolios.values(), key=lambda x: x['sharpe_ratio'])
-                    cml_x = [0, max_sharpe_p['annualized_volatility']*100*2.5]
-                    cml_y = [rf_rate*100, rf_rate*100 + max_sharpe_p['sharpe_ratio']*cml_x[1]]
-                    fig.add_trace(go.Scatter(x=cml_x, y=cml_y, mode='lines', name='CML', line=dict(color='#4ECDC4', width=2, dash='dash'), hoverinfo='skip'))
+                    # 4. Capital Market Line (CML)
+                    if show_cml:
+                        max_sharpe_p = max(analyzer.portfolios.values(), key=lambda x: x['sharpe_ratio'])
+                        cml_x = [0, max_sharpe_p['annualized_volatility'] * 100 * 2.5]
+                        cml_y = [rf_rate * 100, rf_rate * 100 + max_sharpe_p['sharpe_ratio'] * cml_x[1]]
+                        
+                        fig.add_trace(go.Scatter(
+                            x=cml_x,
+                            y=cml_y,
+                            mode='lines',
+                            name='Capital Market Line',
+                            line=dict(color='#4ECDC4', width=2, dash='dash'),
+                            hovertemplate='CML<br>Vol: %{x:.2f}%<br>Return: %{y:.2f}%<extra></extra>'
+                        ))
+                        
+                        # Risk-free point
+                        fig.add_trace(go.Scatter(
+                            x=[0],
+                            y=[rf_rate * 100],
+                            mode='markers+text',
+                            name='Risk-Free Rate',
+                            marker=dict(size=12, color='#4ECDC4', symbol='star'),
+                            text=['Rf'],
+                            textposition='top center',
+                            textfont=dict(color='#4ECDC4', size=10),
+                            hovertemplate=f'<b>Risk-Free Asset</b><br>Return: {rf_rate*100:.2f}%<extra></extra>'
+                        ))
                     
-                    fig.update_layout(height=500, xaxis_title="Volatility (%)", yaxis_title="Return (%)",
-                                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
+                    # Layout
+                    fig.update_layout(
+                        height=600,
+                        xaxis_title="Annualized Volatility (%)",
+                        yaxis_title="Annualized Return (%)",
+                        legend=dict(
+                            orientation="v",
+                            yanchor="top",
+                            y=0.99,
+                            xanchor="left",
+                            x=0.01,
+                            bgcolor='rgba(26,26,36,0.9)',
+                            bordercolor='rgba(99,102,241,0.5)',
+                            borderwidth=1
+                        ),
+                        hovermode='closest'
+                    )
+                    
                     fig = apply_plotly_theme(fig)
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("📉 Min Vol", f"{frontier_df['Volatility'].min()*100:.2f}%")
-                    col2.metric("📈 Max Return", f"{frontier_df['Return'].max()*100:.2f}%")
-                    col3.metric("⭐ Max Sharpe", f"{frontier_df['Sharpe'].max():.3f}")
+                    # ===== METRICS =====
+                    st.markdown("---")
+                    st.markdown("#### 📊 Frontier Statistics")
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric(
+                            "📉 Min Volatility",
+                            f"{frontier_df['Volatility'].min()*100:.2f}%",
+                            help="Lowest risk on the efficient frontier"
+                        )
+                    with col2:
+                        st.metric(
+                            "📈 Max Return",
+                            f"{frontier_df['Return'].max()*100:.2f}%",
+                            help="Highest return on the efficient frontier"
+                        )
+                    with col3:
+                        max_sharpe_frontier = frontier_df.loc[frontier_df['Sharpe'].idxmax()]
+                        st.metric(
+                            "⭐ Max Sharpe",
+                            f"{max_sharpe_frontier['Sharpe']:.3f}",
+                            help="Best risk-adjusted return on frontier"
+                        )
+                    with col4:
+                        if scenarios_data is not None:
+                            st.metric(
+                                "🎲 Scenarios",
+                                f"{len(scenarios_data['volatility'])}",
+                                help="Number of uncertainty scenarios generated"
+                            )
+                    
+                    # ===== ALLOCATION HEATMAP =====
+                    st.markdown("---")
+                    st.markdown("#### 🎨 Portfolio Weights Along Frontier")
+                    
+                    st.markdown("""
+                    This heatmap shows how asset weights change as you move along the efficient frontier 
+                    from **low risk** (left) to **high return** (right).
+                    """)
+                    
+                    # Sample points along frontier for weight visualization
+                    n_sample_points = min(15, len(frontier_df))
+                    sample_indices = np.linspace(0, len(frontier_df)-1, n_sample_points, dtype=int)
+                    
+                    weights_along_frontier = []
+                    returns_aligned = analyzer.returns.reindex(columns=analyzer.symbols)
+                    expected_returns = returns_aligned.mean() * 252
+                    cov_matrix = returns_aligned.cov() * 252
+                    
+                    for idx in sample_indices:
+                        target_return = frontier_df.iloc[idx]['Return']
+                        
+                        try:
+                            def portfolio_variance(w):
+                                return np.dot(w.T, np.dot(cov_matrix, w))
+                            
+                            constraints = [
+                                {'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
+                                {'type': 'eq', 'fun': lambda x: np.dot(x, expected_returns) - target_return}
+                            ]
+                            bounds = tuple((0, 1) for _ in range(len(analyzer.symbols)))
+                            initial_guess = np.ones(len(analyzer.symbols)) / len(analyzer.symbols)
+                            
+                            result = minimize(
+                                portfolio_variance,
+                                initial_guess,
+                                method='SLSQP',
+                                bounds=bounds,
+                                constraints=constraints,
+                                options={'ftol': 1e-9}
+                            )
+                            
+                            if result.success:
+                                weights_along_frontier.append(result.x * 100)
+                            else:
+                                weights_along_frontier.append(np.zeros(len(analyzer.symbols)))
+                        except:
+                            weights_along_frontier.append(np.zeros(len(analyzer.symbols)))
+                    
+                    weights_matrix = np.array(weights_along_frontier).T
+                    
+                    # Create heatmap
+                    fig_heatmap = go.Figure(data=go.Heatmap(
+                        z=weights_matrix,
+                        x=[f"{frontier_df.iloc[idx]['Volatility']*100:.1f}%" for idx in sample_indices],
+                        y=[get_display_name(s) for s in analyzer.symbols],
+                        colorscale='Viridis',
+                        text=weights_matrix.round(1),
+                        texttemplate='%{text:.0f}%',
+                        textfont={"size": 9},
+                        colorbar=dict(title="Weight (%)")
+                    ))
+                    
+                    fig_heatmap.update_layout(
+                        height=max(300, len(analyzer.symbols) * 30),
+                        xaxis_title="Portfolio Volatility →",
+                        yaxis_title="Asset",
+                        yaxis=dict(tickfont=dict(size=10))
+                    )
+                    
+                    fig_heatmap = apply_plotly_theme(fig_heatmap)
+                    st.plotly_chart(fig_heatmap, use_container_width=True)
+                    
+                    st.caption("💡 **Reading the heatmap**: Bright colors = high weight. As you move right (higher risk), weights shift toward higher-return assets.")
+                    
+                    # ===== EDUCATIONAL SECTION =====
+                    with st.expander("📚 Understanding the Efficient Frontier"):
+                        st.markdown("""
+                        ### What is the Efficient Frontier?
+                        
+                        The **efficient frontier** is a fundamental concept in Modern Portfolio Theory (Markowitz, 1952). 
+                        It represents the set of **optimal portfolios** that offer:
+                        
+                        - **Maximum return** for a given level of risk, OR
+                        - **Minimum risk** for a given target return
+                        
+                        Any portfolio **below** the frontier is suboptimal - you could get more return for the same risk, 
+                        or less risk for the same return.
+                        
+                        ---
+                        
+                        ### Key Components
+                        
+                        **1. Efficient Frontier (Yellow Line)**
+                        - Shows all optimal risk-return combinations
+                        - Curved shape due to diversification benefits
+                        - Higher risk → higher return (but diminishing marginal benefit)
+                        
+                        **2. Capital Market Line (Teal Dashed Line)**
+                        - Connects risk-free rate to the **tangency portfolio** (max Sharpe)
+                        - Represents **optimal** combinations of risk-free asset + risky portfolio
+                        - Slope = Sharpe ratio of tangency portfolio
+                        
+                        **3. Uncertainty Scenarios (Gray Cloud)**
+                        - Shows **estimation risk** - where efficient portfolios might actually land
+                        - Generated using Bayesian posterior sampling
+                        - Wider cloud = more uncertainty in parameter estimates
+                        
+                        **4. Portfolio Points (Colored Markers)**
+                        - Your actual optimized portfolios
+                        - **Diamond** = Maximum Sharpe portfolio (tangency)
+                        - **Circles** = Other strategies (min vol, risk parity, etc.)
+                        
+                        ---
+                        
+                        ### Why Scenarios Matter
+                        
+                        Traditional efficient frontiers assume we **know** the true expected returns and covariances. 
+                        In reality, we only have **estimates** from historical data, which contain errors.
+                        
+                        **The uncertainty cloud shows:**
+                        - How much our frontier could shift due to estimation error
+                        - That "optimal" portfolios have a range of possible outcomes
+                        - Why **robust strategies** (like equal-weight or risk parity) can outperform in practice
+                        
+                        **Key insight**: A portfolio slightly "off" the theoretical frontier but with **stable weights** 
+                        may outperform a portfolio "on" the frontier with **unstable weights** that shift dramatically 
+                        with small data changes.
+                        
+                        ---
+                        
+                        ### Practical Implications
+                        
+                        ✅ **Use the frontier for guidance**, not gospel  
+                        ✅ **Diversify across strategies** that perform well in different scenarios  
+                        ✅ **Monitor uncertainty** - wide clouds suggest high parameter uncertainty  
+                        ✅ **Prefer robustness** over theoretical optimality  
+                        
+                        📖 **Reference**: Markowitz, H. (1952). "Portfolio Selection." *Journal of Finance*, 7(1), 77-91.
+                        """)
+                
+                else:
+                    st.warning("⚠️ Could not calculate efficient frontier. Check data quality.")
         
         # TAB 7: BENCHMARK (if available)
         if tab8 is not None:
