@@ -1,4 +1,4 @@
-
+from scipy import stats
 
 try:
     from arch import arch_model
