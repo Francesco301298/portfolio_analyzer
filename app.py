@@ -14,9 +14,9 @@ from scipy.optimize import minimize
 import requests
 
 from core.metrics import calculate_portfolio_metrics
-from core.metrics import optimize_portfolio_weights
-from core.metrics import run_walk_forward_analysis
-from core.metrics import get_hrp_dendrogram_data
+from core.optimization import optimize_portfolio_weights
+from core.optimization import run_walk_forward_analysis
+from core.optimization import get_hrp_dendrogram_data
 
 from core.statistics import compute_autocorrelation
 from core.statistics import invariance_test_ellipsoid
