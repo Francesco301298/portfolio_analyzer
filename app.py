@@ -1107,8 +1107,9 @@ if not st.session_state.run_analysis and st.session_state.analyzer is None:
                 st.session_state.run_analysis = True
                 st.rerun()
             # Mostra lista asset con nomi completi, uno per riga
-            asset_names = [get_display_name(t) for t in tickers]
-            st.caption("\n".join([f"• {name}" for name in asset_names]))
+            asset_list_html = "<br>".join([f"• {get_display_name(t)}" for t in tickers])
+            st.markdown(f"<p style='font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.5rem;'>{asset_list_html}</p>", unsafe_allow_html=True)
+
 
 # Part 3: Analysis Logic
 
