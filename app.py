@@ -4010,19 +4010,102 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             st.markdown("### 📐 Efficient Frontier")
             
             st.markdown("""
-            The chart below shows the **universe of possible portfolios**. Each point represents 
-            a portfolio with different asset weights. The **upper-left boundary** of this cloud 
-            is the efficient frontier - portfolios that maximize return for each level of risk.
+            The **Efficient Frontier** represents the set of optimal portfolios that offer the highest 
+            expected return for a given level of risk (or the lowest risk for a given return level).
+            
+            This visualization helps you understand where your optimized strategies stand relative 
+            to the universe of all possible portfolio combinations.
             """)
+            
+            # Educational section BEFORE the chart
+            with st.expander("📚 Understanding the Efficient Frontier", expanded=False):
+                st.markdown("""
+                ### What is the Efficient Frontier?
+                
+                The Efficient Frontier is a cornerstone concept of **Modern Portfolio Theory (MPT)**, 
+                introduced by Harry Markowitz in 1952. It answers a fundamental question:
+                
+                > *"Given a set of assets, what is the best possible combination of risk and return I can achieve?"*
+                
+                ---
+                
+                ### Key Concepts
+                
+                **1. The Risk-Return Trade-off**
+                
+                In finance, higher returns typically come with higher risk. The Efficient Frontier 
+                shows the **optimal trade-off**: portfolios on the frontier give you the maximum 
+                return for each level of risk you're willing to accept.
+                
+                **2. Diversification Benefit**
+                
+                The "bullet" shape of the portfolio cloud demonstrates the power of diversification:
+                - By combining assets that don't move perfectly together (correlation < 1), 
+                you can achieve **lower portfolio volatility** than holding any single asset
+                - The leftmost point of the frontier represents the **Global Minimum Variance Portfolio**
+                
+                **3. Dominated vs Efficient Portfolios**
+                
+                - **Efficient portfolios** (on the frontier): No other portfolio offers higher return 
+                for the same risk, or lower risk for the same return
+                - **Dominated portfolios** (inside the cloud): Suboptimal—you could do better by 
+                moving to the frontier
+                
+                ---
+                
+                ### How to Read the Chart Below
+                
+                | Element | What it represents |
+                |---------|-------------------|
+                | **Red cloud** | Random portfolio combinations (showing the "feasible region") |
+                | **Upper-left boundary** | The Efficient Frontier itself |
+                | **Colored markers** | Your optimized portfolio strategies |
+                | **X-axis (Volatility)** | Risk measured as annualized standard deviation |
+                | **Y-axis (Return)** | Expected annualized return |
+                
+                ---
+                
+                ### Interpreting Your Strategies
+                
+                - **On the frontier**: Your optimization is working well—the strategy is efficient
+                - **Below the frontier**: The strategy may have constraints (e.g., transaction costs, 
+                rebalancing rules) that prevent it from reaching theoretical optimality
+                - **Similar positions**: Multiple strategies clustering together suggests they 
+                produce similar risk-return profiles despite different methodologies
+                
+                ---
+                
+                ### Limitations to Keep in Mind
+                
+                1. **Based on historical data**: Past correlations and returns may not persist
+                2. **Assumes normal distributions**: Doesn't fully capture tail risks
+                3. **Ignores transaction costs**: Theoretical frontier doesn't account for trading frictions
+                4. **Static view**: The frontier shifts as market conditions change
+                
+                ---
+                
+                📖 **Reference**: Markowitz, H. (1952). "Portfolio Selection." *The Journal of Finance*, 7(1), 77-91.
+                """)
             
             st.markdown("---")
             
             # Configuration
             col1, col2 = st.columns(2)
             with col1:
-                n_portfolios = st.slider("Number of random portfolios", 2000, 20000, 10000, step=1000, key="n_port")
+                n_portfolios = st.slider(
+                    "Number of random portfolios", 
+                    2000, 20000, 10000, 
+                    step=1000, 
+                    key="n_port",
+                    help="More portfolios = smoother frontier visualization"
+                )
             with col2:
-                allow_short = st.checkbox("Allow short selling", value=False, key="allow_short")
+                allow_short = st.checkbox(
+                    "Allow short selling", 
+                    value=False, 
+                    key="allow_short",
+                    help="If enabled, portfolio weights can be negative (betting against assets)"
+                )
             
             with st.spinner(f"Generating {n_portfolios:,} portfolios..."):
                 
@@ -4035,6 +4118,8 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 mean_returns = returns_aligned.mean() * 252
                 
                 # ===== GENERATE RANDOM PORTFOLIOS =====
+                # Using Dirichlet distribution for proper simplex sampling
+                # Alpha parameter controls concentration: higher = more uniform weights
                 np.random.seed(42)
                 
                 portfolio_returns = []
@@ -4042,13 +4127,22 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 portfolio_sharpes = []
                 portfolio_weights = []
                 
+                # Use alpha = 2 for better coverage of the frontier
+                # (alpha = 1 tends to generate sparse portfolios)
+                dirichlet_alpha = 2.0
+                
                 for _ in range(n_portfolios):
                     if allow_short:
-                        w = np.random.normal(1, 0.3, n_assets)
-                        w = w / np.sum(w)
+                        # For short selling: generate weights that can be negative
+                        # but still sum to 1 (fully invested constraint)
+                        # Method: Generate from normal, then normalize
+                        w = np.random.randn(n_assets) * 0.5 + (1.0 / n_assets)
+                        w = w / np.sum(w)  # Ensure weights sum to 1
                     else:
-                        w = np.random.dirichlet(np.ones(n_assets))
+                        # Long-only: Dirichlet distribution ensures w_i >= 0 and sum(w) = 1
+                        w = np.random.dirichlet(np.ones(n_assets) * dirichlet_alpha)
                     
+                    # Calculate portfolio metrics
                     port_return = np.dot(mean_returns, w)
                     port_variance = np.dot(w, np.dot(cov_matrix, w))
                     port_volatility = np.sqrt(port_variance)
@@ -4058,21 +4152,6 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     portfolio_volatilities.append(port_volatility * 100)
                     portfolio_sharpes.append(port_sharpe)
                     portfolio_weights.append(w)
-                
-                # ===== INDIVIDUAL ASSETS =====
-                asset_returns = []
-                asset_volatilities = []
-                
-                for k in range(n_assets):
-                    w = np.zeros(n_assets)
-                    w[k] = 1.0
-                    
-                    asset_ret = np.dot(mean_returns, w)
-                    asset_var = np.dot(w, np.dot(cov_matrix, w))
-                    asset_vol = np.sqrt(asset_var)
-                    
-                    asset_returns.append(asset_ret * 100)
-                    asset_volatilities.append(asset_vol * 100)
                 
                 # ===== YOUR OPTIMIZED PORTFOLIOS =====
                 strategy_returns = []
@@ -4103,26 +4182,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     hovertemplate='Return: %{y:.2f}%<br>Volatility: %{x:.2f}%<extra></extra>'
                 ))
                 
-                # 2. Individual assets (NO legend - showlegend=False)
-                fig.add_trace(go.Scatter(
-                    x=asset_volatilities,
-                    y=asset_returns,
-                    mode='markers+text',
-                    name='Individual Assets',
-                    showlegend=False,  # Hide from legend
-                    marker=dict(
-                        size=10,
-                        color='rgba(78, 205, 196, 0.6)',
-                        symbol='square',
-                        line=dict(width=1, color='white')
-                    ),
-                    text=[get_display_name(s)[:6] for s in analyzer.symbols],
-                    textposition='top center',
-                    textfont=dict(size=8, color='rgba(78, 205, 196, 0.8)'),
-                    hovertemplate='<b>%{text}</b><br>Return: %{y:.2f}%<br>Volatility: %{x:.2f}%<extra></extra>'
-                ))
-                
-                # 3. Your optimized portfolios (colored markers - IN legend)
+                # 2. Your optimized portfolios (colored markers - IN legend)
                 portfolio_colors = ['#FFE66D', '#A855F7', '#6366F1', '#FF9F43', '#EC4899', '#10B981', '#F59E0B']
                 portfolio_symbols = ['star', 'diamond', 'hexagon', 'pentagon', 'circle', 'square', 'triangle-up']
                 
@@ -4133,7 +4193,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         mode='markers',
                         name=name,
                         marker=dict(
-                            size=16,
+                            size=18,
                             color=portfolio_colors[i % len(portfolio_colors)],
                             symbol=portfolio_symbols[i % len(portfolio_symbols)],
                             line=dict(width=2, color='white')
@@ -4143,8 +4203,8 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 
                 # Layout
                 fig.update_layout(
-                    height=700,
-                    xaxis_title="Annualized Volatility (Std Dev) %",
+                    height=650,
+                    xaxis_title="Annualized Volatility (Standard Deviation) %",
                     yaxis_title="Annualized Return %",
                     legend=dict(
                         orientation="v",
@@ -4164,22 +4224,35 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 fig = apply_plotly_theme(fig)
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # ===== STATISTICS =====
+                # ===== QUICK STATS =====
                 st.markdown("---")
                 
                 col1, col2, col3, col4 = st.columns(4)
                 
                 with col1:
-                    st.metric("🎲 Portfolios", f"{n_portfolios:,}")
+                    st.metric("🎲 Simulated Portfolios", f"{n_portfolios:,}")
                 with col2:
                     best_sharpe_idx = np.argmax(portfolio_sharpes)
-                    st.metric("⭐ Best Sharpe (random)", f"{portfolio_sharpes[best_sharpe_idx]:.3f}")
+                    st.metric("⭐ Best Random Sharpe", f"{portfolio_sharpes[best_sharpe_idx]:.3f}")
                 with col3:
                     min_vol_idx = np.argmin(portfolio_volatilities)
-                    st.metric("📉 Min Volatility", f"{portfolio_volatilities[min_vol_idx]:.2f}%")
+                    st.metric("📉 Min Volatility Found", f"{portfolio_volatilities[min_vol_idx]:.2f}%")
                 with col4:
                     max_ret_idx = np.argmax(portfolio_returns)
-                    st.metric("📈 Max Return", f"{portfolio_returns[max_ret_idx]:.2f}%")
+                    st.metric("📈 Max Return Found", f"{portfolio_returns[max_ret_idx]:.2f}%")
+                
+                # Compare with optimized strategies
+                st.markdown("##### 🎯 How Do Your Strategies Compare?")
+                
+                best_random_sharpe = portfolio_sharpes[best_sharpe_idx]
+                best_strategy_sharpe = max(strategy_sharpes)
+                best_strategy_name = strategy_names[strategy_sharpes.index(best_strategy_sharpe)]
+                
+                if best_strategy_sharpe >= best_random_sharpe:
+                    st.success(f"✅ Your **{best_strategy_name}** (Sharpe: {best_strategy_sharpe:.3f}) matches or beats the best random portfolio (Sharpe: {best_random_sharpe:.3f})")
+                else:
+                    diff = best_random_sharpe - best_strategy_sharpe
+                    st.info(f"📊 The best random portfolio (Sharpe: {best_random_sharpe:.3f}) slightly outperforms **{best_strategy_name}** (Sharpe: {best_strategy_sharpe:.3f}) by {diff:.3f}")
                 
                 st.markdown("---")
                 
@@ -4187,8 +4260,8 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 st.markdown("#### 🔍 Explore the Frontier")
                 
                 st.markdown("""
-                The efficient frontier is the **upper-left edge** of the cloud. Use the slider 
-                to explore portfolios along this boundary and compare with your optimized strategies.
+                Use the slider below to explore portfolios along the efficient frontier. 
+                Select different risk levels and compare with your optimized strategies.
                 """)
                 
                 # Find approximate frontier by bucketing volatility and finding max return
@@ -4288,7 +4361,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             # Dynamic y-axis range based on data
                             max_weight = weights_df['Weight'].max()
                             min_weight = weights_df['Weight'].min()
-                            y_max = max(max_weight * 1.15, 10)  # At least 10%, or 15% above max
+                            y_max = max(max_weight * 1.15, 10)
                             y_min = min(min_weight * 1.15, 0) if min_weight < 0 else 0
                             
                             colors = ['#4ECDC4' if w >= 0 else '#FF6B6B' for w in weights_df['Weight']]
@@ -4305,7 +4378,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             fig_w.update_layout(
                                 height=280,
                                 yaxis_title="Weight (%)",
-                                yaxis=dict(range=[y_min, y_max]),  # Dynamic range
+                                yaxis=dict(range=[y_min, y_max]),
                                 xaxis_title="",
                                 showlegend=False,
                                 margin=dict(t=20, b=30, l=50, r=20)
@@ -4359,7 +4432,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     
                     # Base line
                     fig_perf.add_hline(y=100, line_dash="dot", line_color="rgba(255,255,255,0.3)",
-                                      annotation_text="Initial Investment", annotation_position="right")
+                                    annotation_text="Initial Investment", annotation_position="right")
                     
                     fig_perf.update_layout(
                         height=400,
@@ -4425,57 +4498,6 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         st.success(f"📊 The frontier portfolio has a **higher Sharpe ratio** (+{diff_sharpe:.3f}) than {compare_portfolio['name']}.")
                     else:
                         st.info(f"📊 {compare_portfolio['name']} has a **higher Sharpe ratio** (+{diff_sharpe:.3f}) than this frontier portfolio.")
-                
-                st.markdown("---")
-                
-                # ===== EDUCATIONAL =====
-                with st.expander("📚 Understanding This Chart"):
-                    st.markdown("""
-                    ### What You See
-                    
-                    - **Red cloud**: Thousands of randomly generated portfolios with different weight combinations
-                    - **Teal squares**: Individual assets (100% allocation to one asset)
-                    - **Colored shapes**: Your optimized strategies (shown in legend)
-                    
-                    ### The Efficient Frontier
-                    
-                    The **upper-left boundary** of the cloud is the efficient frontier. 
-                    These portfolios offer:
-                    - Maximum return for a given volatility level, OR
-                    - Minimum volatility for a given return level
-                    
-                    Portfolios **inside** the cloud are suboptimal - you could find a better 
-                    risk-return combination on the frontier.
-                    
-                    ### Why This Shape?
-                    
-                    The "bullet" shape emerges from **diversification**:
-                    
-                    - Combining assets with low correlation reduces overall portfolio risk
-                    - You can achieve volatility **lower** than any individual asset
-                    - The leftmost point shows the **minimum variance portfolio**
-                    
-                    ### Comparing Frontier vs Optimized Strategies
-                    
-                    The performance comparison shows how a randomly-found frontier portfolio 
-                    compares to your optimized strategies. Key insights:
-                    
-                    - **Similar performance**: Your optimization is working well
-                    - **Frontier better**: There may be room to improve your strategy
-                    - **Strategy better**: Your strategy may have benefits not captured by mean-variance (e.g., robustness)
-                    
-                    ### Short Selling
-                    
-                    If you enable "Allow short selling":
-                    - Weights can be negative (betting against an asset)
-                    - The cloud extends further in all directions
-                    - More extreme portfolios become possible
-                    - Potentially higher returns but also higher risk
-                    
-                    ---
-                    
-                    📖 **Reference**: Markowitz, H. (1952). "Portfolio Selection." *Journal of Finance*.
-                    """)
         
         # TAB 7: BENCHMARK (if available)
         if tab8 is not None:
