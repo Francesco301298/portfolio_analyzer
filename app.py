@@ -4241,18 +4241,103 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     max_ret_idx = np.argmax(portfolio_returns)
                     st.metric("📈 Max Return Found", f"{portfolio_returns[max_ret_idx]:.2f}%")
                 
-                # Compare with optimized strategies
-                st.markdown("##### 🎯 How Do Your Strategies Compare?")
-                
-                best_random_sharpe = portfolio_sharpes[best_sharpe_idx]
-                best_strategy_sharpe = max(strategy_sharpes)
-                best_strategy_name = strategy_names[strategy_sharpes.index(best_strategy_sharpe)]
-                
-                if best_strategy_sharpe >= best_random_sharpe:
-                    st.success(f"✅ Your **{best_strategy_name}** (Sharpe: {best_strategy_sharpe:.3f}) matches or beats the best random portfolio (Sharpe: {best_random_sharpe:.3f})")
-                else:
-                    diff = best_random_sharpe - best_strategy_sharpe
-                    st.info(f"📊 The best random portfolio (Sharpe: {best_random_sharpe:.3f}) slightly outperforms **{best_strategy_name}** (Sharpe: {best_strategy_sharpe:.3f}) by {diff:.3f}")
+                # ===== WHY SOME STRATEGIES ARE INSIDE THE CLOUD =====
+                st.markdown("---")
+
+                with st.expander("📚 Why Are Some Strategies Inside the Cloud?", expanded=False):
+                    st.markdown("""
+                    You might wonder: *"If I optimized these portfolios, why aren't they all on the efficient frontier?"*
+                    
+                    This is one of the most important insights in modern portfolio theory.
+                    
+                    ---
+                    
+                    ### The Efficient Frontier is "Optimal" Only in Hindsight
+                    
+                    The frontier you see is calculated using **historical data**. It shows the best you 
+                    *could have done* if you had known the future perfectly. But when these strategies 
+                    were "optimized," they only had access to past data—just like in real investing.
+                    
+                    ---
+                    
+                    ### The Problem: Estimation Error
+                    
+                    Markowitz optimization requires estimating **expected returns** and **covariances**. 
+                    These estimates are extremely noisy:
+                    
+                    > Merton (1980) showed that estimating expected returns with the same precision as 
+                    > volatility would require **~500 years of data**.
+                    
+                    Worse, mean-variance optimization **amplifies these errors**—it overweights assets 
+                    with overestimated returns and underweights those with underestimated returns.
+                    
+                    > Michaud (1989) called this phenomenon **"error maximization."**
+                    
+                    ---
+                    
+                    ### The Surprising Truth: Simple Often Beats "Optimal"
+                    
+                    In a landmark study, **DeMiguel, Garlappi & Uppal (2009)** compared 14 optimization 
+                    strategies against the naive 1/N (Equal Weight) portfolio across 7 datasets.
+                    
+                    **Result:** No optimized strategy consistently beat Equal Weight out-of-sample!
+                    
+                    They estimated that **~250 years of data** would be needed for mean-variance 
+                    optimization to reliably outperform 1/N.
+                    
+                    ---
+                    
+                    ### Why Risk Parity and HRP Work
+                    
+                    These strategies deliberately sacrifice theoretical optimality for **robustness**:
+                    
+                    | Strategy | Why It's "Inside" the Cloud | Why It Often Works Better |
+                    |----------|----------------------------|---------------------------|
+                    | **Equal Weight** | Ignores all optimization | Zero estimation error |
+                    | **Risk Parity** | Ignores expected returns | Only estimates covariances |
+                    | **HRP** | Uses clustering, not optimization | No matrix inversion, more stable |
+                    
+                    > López de Prado (2016) showed HRP outperforms both Markowitz and Risk Parity 
+                    > out-of-sample due to its numerical stability and hierarchical structure.
+                    
+                    ---
+                    
+                    ### An Additional Problem: Volatility Isn't "Risk"
+                    
+                    The entire framework assumes returns are **normally distributed**. In reality, 
+                    financial returns exhibit:
+                    
+                    - **Fat tails**: Extreme events happen far more often than the normal distribution predicts
+                    - **Skewness**: Crashes are sharper than rallies
+                    - **Volatility clustering**: Calm and turbulent periods cluster together
+                    
+                    > Mandelbrot (1963) and Cont (2001) documented these "stylized facts" that violate 
+                    > the normality assumption underlying mean-variance optimization.
+                    
+                    Volatility also **penalizes gains equally with losses**—but investors don't mind 
+                    upside volatility! This is why metrics like **Sortino** and **CVaR** are often 
+                    more meaningful than Sharpe.
+                    
+                    ---
+                    
+                    ### The Bottom Line
+                    
+                    > **The efficient frontier shows the best you could have done with perfect foresight. 
+                    > Strategies like Equal Weight, Risk Parity, and HRP accept being "suboptimal" 
+                    > in-sample to be more robust when the future is uncertain—which is always.**
+                    
+                    ---
+                    
+                    #### 📖 Key References
+                    
+                    - Markowitz, H. (1952). "Portfolio Selection." *Journal of Finance*
+                    - Merton, R.C. (1980). "On Estimating the Expected Return on the Market." *JFE*
+                    - Michaud, R.O. (1989). "The Markowitz Optimization Enigma." *FAJ*
+                    - DeMiguel, V. et al. (2009). "Optimal Versus Naive Diversification." *RFS*
+                    - López de Prado, M. (2016). "Building Diversified Portfolios that Outperform Out-of-Sample." *JPM*
+                    - Mandelbrot, B. (1963). "The Variation of Certain Speculative Prices." *Journal of Business*
+                    - Cont, R. (2001). "Empirical Properties of Asset Returns." *Quantitative Finance*
+                    """)
                 
                 st.markdown("---")
                 
