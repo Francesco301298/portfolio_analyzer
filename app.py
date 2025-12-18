@@ -714,32 +714,6 @@ def calculate_all_portfolios_with_costs(analyzer, rebalance_freq, rebalance_thre
     
     return results
     
-def get_hrp_dendrogram_data(analyzer):
-    """
-    Generate dendrogram data for HRP visualization.
-    Returns linkage matrix and sorted symbols for plotting.
-    """
-    from scipy.cluster.hierarchy import linkage, dendrogram
-    from scipy.spatial.distance import squareform
-    
-    returns_aligned = analyzer.returns.reindex(columns=analyzer.symbols)
-    corr_matrix = returns_aligned.corr()
-    
-    # Handle NaN
-    if corr_matrix.isnull().any().any():
-        corr_matrix = corr_matrix.fillna(0)
-    np.fill_diagonal(corr_matrix.values, 1.0)
-    
-    # Distance matrix (López de Prado formula)
-    distance_matrix = np.sqrt(0.5 * (1 - corr_matrix))
-    np.fill_diagonal(distance_matrix.values, 0)
-    
-    # Condensed form and linkage
-    dist_condensed = squareform(distance_matrix.values, checks=False)
-    link = linkage(dist_condensed, method='single')
-    
-    return link, analyzer.symbols, corr_matrix, distance_matrix
-
 # Session State
 defaults = {
     'analyzer': None, 'analysis_complete': False, 'selected_tickers': [],
