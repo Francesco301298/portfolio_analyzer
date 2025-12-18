@@ -13,6 +13,8 @@ from scipy import stats
 from scipy.optimize import minimize
 import requests
 
+from portfolio_analyzer import AdvancedPortfolioAnalyzer
+
 from core.metrics import calculate_portfolio_metrics
 from core.optimization import optimize_portfolio_weights
 from core.optimization import run_walk_forward_analysis
@@ -649,7 +651,7 @@ if not st.session_state.run_analysis and st.session_state.analyzer is None:
     with col2:
         st.markdown("""<div class='dashboard-card'>
             <h3>📊 Manage Your Portfolio</h3>
-            <p>Analyze individual assets, explore correlations, review statistics, and monitor seasonality patterns. Deep-dive into risk drivers with GARCH models.</p>
+            <p>Analyze individual assets, explore correlations, review statistics, and monitor seasonality patterns. Deep-dive into risk drivers with main econometric models.</p>
         </div>""", unsafe_allow_html=True)
     with col3:
         st.markdown("""<div class='dashboard-card'>
@@ -692,8 +694,6 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
         try:
             status_text.text("🔄 Initializing...")
             progress_bar.progress(10)
-            
-            from portfolio_analyzer import AdvancedPortfolioAnalyzer
             
             status_text.text("📥 Downloading from Yahoo Finance...")
             progress_bar.progress(20)
