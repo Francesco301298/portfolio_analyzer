@@ -4287,22 +4287,8 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     
                     ---
                     
-                    ### Why Risk Parity and HRP Work
                     
-                    These strategies deliberately sacrifice theoretical optimality for **robustness**:
-                    
-                    | Strategy | Why It's "Inside" the Cloud | Why It Often Works Better |
-                    |----------|----------------------------|---------------------------|
-                    | **Equal Weight** | Ignores all optimization | Zero estimation error |
-                    | **Risk Parity** | Ignores expected returns | Only estimates covariances |
-                    | **HRP** | Uses clustering, not optimization | No matrix inversion, more stable |
-                    
-                    > López de Prado (2016) showed HRP outperforms both Markowitz and Risk Parity 
-                    > out-of-sample due to its numerical stability and hierarchical structure.
-                    
-                    ---
-                    
-                    ### An Additional Problem: Volatility Isn't "Risk"
+                    ### An Additional Problem: Volatility (Standard Deviation) Isn't "Risk"
                     
                     The entire framework assumes returns are **normally distributed**. In reality, 
                     financial returns exhibit:
