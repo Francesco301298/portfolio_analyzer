@@ -65,16 +65,20 @@ streamlit run app.py
 4. **Your app will be live at**:
    `https://YOUR_APP_NAME.streamlit.app`
 
-## 📁 Project Structure
+## Portfolio Analyzer – Architecture
 
-```
-portfolio-analyzer/
-├── app.py                 # Main Streamlit application
-├── portfolio_analyzer.py  # Portfolio optimization engine
-├── requirements.txt       # Python dependencies
-├── README.md             # This file
-└── .streamlit/
-    └── config.toml       # Streamlit theme configuration
+app.py
+- Streamlit UI
+- User inputs
+- Visualization
+- Orchestration only
+
+core/
+- metrics.py        → performance metrics
+- optimization.py  → portfolio optimization
+- statistics.py    → statistical tests
+- rebalancing.py   → transaction costs & rebalancing
+- backtesting.py   → CPCV, PBO, validation logic
 ```
 
 ## 🛠️ Technologies
