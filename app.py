@@ -16,6 +16,8 @@ import requests
 from portfolio_analyzer import AdvancedPortfolioAnalyzer
 
 from core.metrics import calculate_portfolio_metrics
+from core.metrics import calculate_robust_metrics
+
 from core.optimization import optimize_portfolio_weights
 from core.optimization import run_walk_forward_analysis
 from core.optimization import get_hrp_dendrogram_data
