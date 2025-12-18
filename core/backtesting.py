@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from core.metrics import calculate_portfolio_metrics
+from core.metrics import calculate_robust_metrics
 from core.optimization import optimize_portfolio_weights
 from core.rebalancing import calculate_portfolio_with_rebalancing
 from itertools import combinations
@@ -102,7 +103,7 @@ def run_cpcv_backtest(
                 
                 # Evaluate on IN-SAMPLE (training data)
                 train_portfolio_returns = train_returns.dot(weights)
-                is_metrics = calculate_portfolio_metrics(
+                is_metrics = calculate_robust_metrics(
                     train_portfolio_returns,
                     rf_rate=rf_rate
                 )
@@ -110,7 +111,7 @@ def run_cpcv_backtest(
                 
                 # Evaluate on OUT-OF-SAMPLE (test data)
                 test_portfolio_returns = test_returns.dot(weights)
-                oos_metrics = calculate_portfolio_metrics(
+                oos_metrics = calculate_robust_metrics(
                     test_portfolio_returns,
                     rf_rate=rf_rate
                 )
