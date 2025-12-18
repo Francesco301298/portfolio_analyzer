@@ -14,6 +14,11 @@ from scipy.optimize import minimize
 import requests
 
 from core.metrics import calculate_portfolio_metrics
+from core.optimization import (
+    optimize_portfolio_weights,
+    run_walk_forward_analysis,
+    get_hrp_dendrogram_data
+)
 
 warnings.filterwarnings('ignore')
 
