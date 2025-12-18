@@ -13,6 +13,8 @@ from scipy import stats
 from scipy.optimize import minimize
 import requests
 
+from core.metrics import calculate_portfolio_metrics
+
 warnings.filterwarnings('ignore')
 
 try:
