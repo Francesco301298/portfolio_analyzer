@@ -82,12 +82,8 @@ def run_cpcv_backtest(
     oos_returns = {m: [] for m in methods}
     
     n_splits_total = len(splits)
-    progress_bar = st.progress(0)
-    status_text = st.empty()
     
     for split_idx, (train_idx, test_idx) in enumerate(splits):
-        progress_bar.progress((split_idx + 1) / n_splits_total)
-        status_text.text(f"Processing split {split_idx + 1}/{n_splits_total}...")
         
         train_returns = returns_df.loc[train_idx]
         test_returns = returns_df.loc[test_idx]
@@ -120,15 +116,14 @@ def run_cpcv_backtest(
                 oos_metrics_all[method].append(oos_metrics)
                 
             except Exception as e:
-                st.warning(f"Split {split_idx+1}: {method} failed - {str(e)}")
+                # propagate error info upward (UI will handle it)
+                pass
                 # Append NaN metrics
                 nan_metrics = {k: np.nan for k in ['sharpe', 'sortino', 'calmar', 'max_drawdown', 'cvar_95', 'win_rate']}
                 is_metrics_all[method].append(nan_metrics)
                 oos_metrics_all[method].append(nan_metrics)
                 continue
     
-    progress_bar.empty()
-    status_text.empty()
 
     return is_metrics_all, oos_metrics_all, oos_returns
 
