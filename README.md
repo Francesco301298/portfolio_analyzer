@@ -1,6 +1,7 @@
 # 📊 Portfolio Analyzer Pro
 
 Advanced Multi-Asset Portfolio Optimization System built with Streamlit.
+Designed for research, education, and robust portfolio analysis.
 
 ## 🚀 Features
 
@@ -16,10 +17,9 @@ Advanced Multi-Asset Portfolio Optimization System built with Streamlit.
 - **Advanced Analytics**:
   - Rolling performance analysis
   - Deep-dive Statistics
+  - Combinatorial Purged Cross-Validation (CPCV)
+  - Probability of Backtest Overfitting (PBO)
   - Correlation matrix
-  - Efficient frontier visualization
-  - Benchmark comparison
-  - VaR and CVaR metrics
 
 - **Export Options**:
   - Excel reports
@@ -50,7 +50,7 @@ streamlit run app.py
 2. **Upload Files**:
    Upload these files to your repository:
    - `app.py`
-   - `portfolio_analyzer.py`
+   - `core/`
    - `requirements.txt`
    - `.streamlit/config.toml`
 
@@ -90,6 +90,12 @@ core/
 - **NumPy/Pandas** - Data processing
 - **SciPy** - Optimization algorithms
 
+## 🤝 Contributing
+
+This repository is public and read-only.
+Contributions are welcome via pull requests.
+Please open an issue to discuss major changes before submitting a PR.
+
 ## ⚠️ Disclaimer
 
 This tool is for **educational and informational purposes only**. It does not constitute financial advice. Always consult with a qualified financial advisor before making investment decisions.
@@ -100,4 +106,3 @@ MIT License - feel free to use and modify.
 
 ---
 
-Made with ❤️ using Streamlit
