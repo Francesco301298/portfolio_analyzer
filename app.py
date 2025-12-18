@@ -3260,8 +3260,8 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             test_portfolio_returns = returns_test.dot(weights_train)
                             
                             # Calculate metrics for both periods
-                            train_metrics = calculate_robust_metrics(train_portfolio_returns, rf_rate)
-                            test_metrics = calculate_robust_metrics(test_portfolio_returns, rf_rate)
+                            train_metrics = calculate_portfolio_metrics(train_portfolio_returns, rf_rate)
+                            test_metrics = calculate_portfolio_metrics(test_portfolio_returns, rf_rate)
                             
                             # Build cumulative series
                             train_cumulative = (1 + train_portfolio_returns).cumprod()
