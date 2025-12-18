@@ -18,7 +18,6 @@ from core.optimization import optimize_portfolio_weights
 from core.optimization import run_walk_forward_analysis
 from core.optimization import get_hrp_dendrogram_data
 
-
 warnings.filterwarnings('ignore')
 
 try:
