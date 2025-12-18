@@ -307,22 +307,44 @@ TICKER_INFO = {
     "PDBC": "Invesco Optimum Yield Diversified Commodity",
     "CPER": "United States Copper Index", "WEAT": "Teucrium Wheat Fund",
     "CORN": "Teucrium Corn Fund", "SOYB": "Teucrium Soybean Fund",
+    "EURUSD=X": "EUR/USD", "GBPUSD=X": "GBP/USD", "USDJPY=X": "USD/JPY",
+    "USDCHF=X": "USD/CHF", "AUDUSD=X": "AUD/USD", "USDCAD=X": "USD/CAD",
+    "NZDUSD=X": "NZD/USD", "EURGBP=X": "EUR/GBP", "EURJPY=X": "EUR/JPY",
+    "GBPJPY=X": "GBP/JPY",
 }
 
-TICKER_DATABASE = {
+# Single Stocks organizzate per settore
+SINGLE_STOCKS = {
     "🇺🇸 US Tech": ["AAPL","MSFT","GOOGL","AMZN","META","NVDA","AMD","INTC","CRM","ADBE","NFLX","PYPL","PLTR","CRWD","SNOW","NET"],
     "🇺🇸 US Finance": ["JPM","BAC","WFC","C","GS","MS","BLK","SCHW","AXP","V","MA","COF"],
     "🇺🇸 US Healthcare": ["JNJ","UNH","PFE","ABBV","TMO","ABT","MRK","LLY","AMGN","BMY","GILD","ISRG"],
     "🇺🇸 US Consumer": ["TSLA","HD","MCD","NKE","SBUX","LOW","TGT","COST","WMT","PG","KO","PEP"],
     "🇺🇸 US Energy": ["XOM","CVX","COP","SLB","EOG","MPC","OXY","DVN","HAL","KMI"],
+}
+
+# Forex con formattazione display
+FOREX_TICKERS = {
+    "EURUSD=X": "EUR/USD",
+    "GBPUSD=X": "GBP/USD",
+    "USDJPY=X": "USD/JPY",
+    "USDCHF=X": "USD/CHF",
+    "AUDUSD=X": "AUD/USD",
+    "USDCAD=X": "USD/CAD",
+    "NZDUSD=X": "NZD/USD",
+    "EURGBP=X": "EUR/GBP",
+    "EURJPY=X": "EUR/JPY",
+    "GBPJPY=X": "GBP/JPY",
+}
+
+TICKER_DATABASE = {
     "📊 Indices": ["^GSPC","^DJI","^IXIC","^RUT","^FTSE","^GDAXI","^N225","^STOXX50E"],
     "📈 ETF Broad": ["SPY","VOO","VTI","QQQ","IWM","VEA","VWO","EEM","EFA","ACWI"],
     "📈 ETF Sector": ["XLK","XLV","XLF","XLE","XLI","XLY","XLP","XLU","VNQ"],
     "💎 Crypto": ["BTC-USD","ETH-USD","BNB-USD","SOL-USD","ADA-USD","XRP-USD","DOGE-USD"],
     "🏛️ Bonds": ["TLT","IEF","SHY","AGG","BND","LQD","HYG","TIP"],
-    "🛢️ Commodities": ["GLD","IAU","SLV","GDX","GDXJ","USO","UNG","DBA","DBC","PDBC","CPER","WEAT","CORN","SOYB"]
+    "🛢️ Commodities": ["GLD","IAU","SLV","GDX","GDXJ","USO","UNG","DBA","DBC","PDBC","CPER","WEAT","CORN","SOYB"],
+    "💱 Forex": list(FOREX_TICKERS.keys()),
 }
-
 def get_display_name(ticker):
     return TICKER_INFO.get(ticker, ticker)
 
@@ -842,6 +864,23 @@ with st.sidebar:
         st.markdown("#### 📚 Select from Categories")
         search_filter = st.text_input("🔍 Filter", placeholder="Filter database...", key="db_filter")
         
+        # Single Stocks con struttura gerarchica
+        with st.expander("📈 Single Stocks", expanded=False):
+            for sector, tickers in SINGLE_STOCKS.items():
+                with st.expander(sector, expanded=False):
+                    if search_filter:
+                        filtered = [t for t in tickers if search_filter.upper() in t.upper() or search_filter.upper() in get_display_name(t).upper()]
+                    else:
+                        filtered = tickers
+                    
+                    if filtered:
+                        cols = st.columns(2)
+                        for idx, ticker in enumerate(filtered):
+                            with cols[idx % 2]:
+                                if st.checkbox(get_display_name(ticker), key=f"db_stock_{sector}_{ticker}"):
+                                    selected_symbols.append(ticker)
+        
+        # Altre categorie (Indices, ETFs, Crypto, Bonds, Commodities, Forex)
         for category, tickers in TICKER_DATABASE.items():
             with st.expander(category, expanded=False):
                 if search_filter:
@@ -854,7 +893,7 @@ with st.sidebar:
                     for idx, ticker in enumerate(filtered):
                         with cols[idx % 2]:
                             if st.checkbox(get_display_name(ticker), key=f"db_{category}_{ticker}"):
-                                selected_symbols.append(ticker)
+                                selected_symbols.append(ticker)    
     
     elif selection_method == "🔍 Yahoo Search":
         st.markdown("#### 🌐 Search Yahoo Finance")
@@ -1036,20 +1075,20 @@ if not st.session_state.run_analysis and st.session_state.analyzer is None:
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown("""<div class='dashboard-card'>
-            <h3>🎯 Quick Start</h3>
-            <ol><li>Select assets</li><li>Configure parameters</li><li>Click Start Analysis</li><li>Explore results</li></ol>
+            <h3>📝 Create Your Portfolio</h3>
+            <p>Select your assets from our database, search Yahoo Finance, or enter tickers manually. Configure date range, risk-free rate, and transaction costs.</p>
         </div>""", unsafe_allow_html=True)
     with col2:
         st.markdown("""<div class='dashboard-card'>
-            <h3>🔍 Yahoo Search</h3>
-            <p>Search <strong>any ticker</strong> worldwide: stocks, ETFs, crypto, indices!</p>
+            <h3>📊 Manage Your Portfolio</h3>
+            <p>Analyze individual assets, explore correlations, review statistics, and monitor seasonality patterns. Deep-dive into risk drivers with GARCH models.</p>
         </div>""", unsafe_allow_html=True)
     with col3:
         st.markdown("""<div class='dashboard-card'>
-            <h3>🧪 NEW: Backtest</h3>
-            <p>Walk-Forward Analysis with Train/Test validation to detect overfitting!</p>
+            <h3>⚡ Optimize Your Portfolio</h3>
+            <p>Compare 7 optimization strategies, backtest with Walk-Forward validation, visualize the Efficient Frontier, and export your results.</p>
         </div>""", unsafe_allow_html=True)
-    
+        
     st.markdown("---")
     st.markdown("## 🎲 Quick Examples")
     
@@ -1059,7 +1098,7 @@ if not st.session_state.run_analysis and st.session_state.analyzer is None:
         "🌍 Global ETFs": ["SPY", "EFA", "EEM", "GLD", "TLT", "VNQ"],
         "🛢️ Commodities": ["GLD", "SLV", "USO", "UNG", "DBC", "CPER"]
     }
-    
+
     cols = st.columns(4)
     for idx, (name, tickers) in enumerate(examples.items()):
         with cols[idx]:
@@ -1067,6 +1106,9 @@ if not st.session_state.run_analysis and st.session_state.analyzer is None:
                 st.session_state.selected_tickers = tickers
                 st.session_state.run_analysis = True
                 st.rerun()
+            # Mostra lista asset sotto il pulsante
+            st.caption(" · ".join(tickers))
+
 # Part 3: Analysis Logic
 
 if st.session_state.run_analysis or st.session_state.analyzer is not None:
