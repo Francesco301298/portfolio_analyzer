@@ -4136,7 +4136,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         # For short selling: generate weights that can be negative
                         # but still sum to 1 (fully invested constraint)
                         # Method: Generate from normal, then normalize
-                        w = np.random.randn(n_assets) * 0.5 + (1.0 / n_assets)
+                        w = np.random.normal(1, 0.3, n_assets)
                         w = w / np.sum(w)  # Ensure weights sum to 1
                     else:
                         # Long-only: Dirichlet distribution ensures w_i >= 0 and sum(w) = 1
