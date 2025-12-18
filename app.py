@@ -3151,470 +3151,535 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 else:
                     st.info("ℹ️ Install `arch` package for GARCH analysis: `pip install arch`")
         # Part 7: Backtest Validation Tab
-        # TAB 5: BACKTEST VALIDATION (MULTI-METRIC) - COMPLETE VERSION
+        # TAB 5: BACKTEST VALIDATION - COMPLETE REWRITE
         with tab5:
-            st.markdown("### 🧪 Backtest Validation (AFML – Combinatorial Purged CV)")
+            st.markdown("### 🧪 Backtest Validation")
             
-            # ==========================
-            # INTRODUCTORY SECTION
-            # ==========================
             st.markdown("""
-            ## 🎯 What Does This Tab Do?
+            This tab helps you answer a critical question that standard analysis ignores:
             
-            This tab answers a critical question that traditional backtests ignore:
+            > **"If I had optimized this strategy in the past, would it have actually worked going forward?"**
             
-            > **"Would this strategy have *actually* worked if I had used it in the past *without knowing the future*?"**
-            
-            ### The Problem with Standard Backtests
-            
-            In the other tabs of this app, you optimize and evaluate strategies using **all available data**. 
-            This creates an **illusion of performance** because:
-            
-            - You optimize portfolio weights on data that includes the test period
-            - The strategy "knows" future market conditions during optimization
-            - Reported Sharpe ratios are **systematically overstated**
-            
-            **Metaphor:** It's like a student who studies the exact exam questions, then takes the same exam and claims to be a genius.
-            
-            ### The Solution: Walk-Forward Validation
-            
-            This tab implements **Combinatorial Purged Cross-Validation (CPCV)**, a rigorous framework from 
-            **Marcos López de Prado's "Advances in Financial Machine Learning" (2018, Chapter 7)**.
-            
-            **How it works:**
-            
-            1. **Split time into K folds** (e.g., 5 periods of ~2 years each for 2015-2024)
-            2. **Create all possible train/test combinations** (e.g., 10 different splits)
-            3. **For each split:**
-            - Optimize strategy on **training data only** (e.g., 2019-2024)
-            - Evaluate performance on **held-out test data** (e.g., 2015-2018)
-            - Apply **embargo** to prevent information leakage
-            4. **Aggregate results** across all splits to get a **distribution** of out-of-sample performance
-
-                ### What You Learn From This Tab
-                
-                ✅ **Robustness:** Does the strategy work across different market regimes?  
-                ✅ **Stability:** How consistent is performance over time?  
-                ✅ **Overfitting Risk:** Is the high Sharpe due to skill or luck?  
-                ✅ **Tail Risk:** What's the worst-case scenario in unseen data?  
-                
-
+            We split your data into a **training period** (where we optimize) and a **test period** 
+            (where we evaluate with frozen weights). This simulates real-world investing.
             """)
             
-            with st.expander("📚 Mathematical Framework"):
-                st.markdown(r"""
+            st.markdown("---")
+            
+            # ================================================================
+            # SECTION 1: WALK-FORWARD VISUALIZATION
+            # ================================================================
+            st.markdown("## 📊 Walk-Forward Analysis")
+            
+            # Configuration row
+            col1, col2, col3 = st.columns([1, 1, 1])
+            
+            with col1:
+                split_options = {
+                    "50/50": 0.50,
+                    "60/40": 0.60,
+                    "70/30": 0.70,
+                    "80/20": 0.80
+                }
+                split_choice = st.selectbox(
+                    "Train/Test Split",
+                    options=list(split_options.keys()),
+                    index=2,  # Default 70/30
+                    key="wf_split",
+                    help="Percentage of data used for optimization vs testing"
+                )
+                train_pct = split_options[split_choice]
+            
+            with col2:
+                # Strategy selector - use strategies from main analysis
+                available_strategies = list(analyzer.portfolios.keys())
+                strategy_names_map = {k: v['name'] for k, v in analyzer.portfolios.items()}
+                
+                selected_strategies = st.multiselect(
+                    "Strategies to Test",
+                    options=available_strategies,
+                    default=available_strategies[:4],  # First 4 by default
+                    format_func=lambda x: strategy_names_map[x],
+                    key="wf_strategies"
+                )
+            
+            with col3:
+                # Calculate split dates
+                n_days = len(analyzer.returns)
+                split_idx = int(n_days * train_pct)
+                train_end_date = analyzer.returns.index[split_idx - 1]
+                test_start_date = analyzer.returns.index[split_idx]
+                
+                st.markdown("**Period Split:**")
+                st.caption(f"Train: {analyzer.returns.index[0].strftime('%Y-%m-%d')} → {train_end_date.strftime('%Y-%m-%d')}")
+                st.caption(f"Test: {test_start_date.strftime('%Y-%m-%d')} → {analyzer.returns.index[-1].strftime('%Y-%m-%d')}")
+            
+            # Run button
+            if len(selected_strategies) < 1:
+                st.warning("⚠️ Select at least one strategy to analyze.")
+            else:
+                if st.button("🚀 Run Walk-Forward Analysis", use_container_width=True, key="run_wf_main"):
+                    
+                    with st.spinner("Optimizing on training period and evaluating on test period..."):
+                        
+                        # Split data
+                        returns_train = analyzer.returns.iloc[:split_idx]
+                        returns_test = analyzer.returns.iloc[split_idx:]
+                        
+                        # Store results
+                        wf_results = {}
+                        
+                        progress_bar = st.progress(0)
+                        
+                        for i, strategy_key in enumerate(selected_strategies):
+                            progress_bar.progress((i + 1) / len(selected_strategies))
+                            
+                            # Get optimization method
+                            method_map = {
+                                'equally_weighted': 'equal',
+                                'min_volatility': 'min_vol',
+                                'max_return': 'max_return',
+                                'max_sharpe': 'max_sharpe',
+                                'risk_parity': 'risk_parity',
+                                'markowitz': 'max_sharpe',  # Use max_sharpe as proxy
+                                'hrp': 'risk_parity'  # HRP uses different logic, approximate with RP
+                            }
+                            
+                            method = method_map.get(strategy_key, 'equal')
+                            strategy_name = strategy_names_map[strategy_key]
+                            
+                            # Optimize on TRAINING data only
+                            weights_train = optimize_portfolio_weights(
+                                returns_train,
+                                method=method,
+                                rf_rate=rf_rate
+                            )
+                            
+                            # Calculate returns for BOTH periods using weights from training
+                            train_portfolio_returns = returns_train.dot(weights_train)
+                            test_portfolio_returns = returns_test.dot(weights_train)
+                            
+                            # Calculate metrics for both periods
+                            train_metrics = calculate_robust_metrics(train_portfolio_returns, rf_rate)
+                            test_metrics = calculate_robust_metrics(test_portfolio_returns, rf_rate)
+                            
+                            # Build cumulative series
+                            train_cumulative = (1 + train_portfolio_returns).cumprod()
+                            test_cumulative = (1 + test_portfolio_returns).cumprod()
+                            
+                            # Chain test to end of train (continuous growth)
+                            test_cumulative_chained = test_cumulative * train_cumulative.iloc[-1]
+                            
+                            # Full series
+                            full_cumulative = pd.concat([train_cumulative, test_cumulative_chained])
+                            
+                            # Stability ratio
+                            if train_metrics['sharpe'] != 0 and not np.isnan(train_metrics['sharpe']):
+                                sharpe_stability = test_metrics['sharpe'] / train_metrics['sharpe']
+                            else:
+                                sharpe_stability = 0
+                            
+                            wf_results[strategy_key] = {
+                                'name': strategy_name,
+                                'weights': weights_train,
+                                'train_metrics': train_metrics,
+                                'test_metrics': test_metrics,
+                                'train_cumulative': train_cumulative,
+                                'test_cumulative_chained': test_cumulative_chained,
+                                'full_cumulative': full_cumulative,
+                                'train_returns': train_portfolio_returns,
+                                'test_returns': test_portfolio_returns,
+                                'sharpe_stability': sharpe_stability
+                            }
+                        
+                        progress_bar.empty()
+                    
+                    # Store in session state for persistence
+                    st.session_state.wf_results = wf_results
+                    st.session_state.wf_split_idx = split_idx
+                    st.session_state.wf_train_end = train_end_date
+                    st.session_state.wf_test_start = test_start_date
+                
+                # Display results if available
+                if 'wf_results' in st.session_state and st.session_state.wf_results:
+                    
+                    wf_results = st.session_state.wf_results
+                    split_idx = st.session_state.wf_split_idx
+                    train_end_date = st.session_state.wf_train_end
+                    test_start_date = st.session_state.wf_test_start
+                    
+                    st.markdown("---")
+                    
+                    # ===== MAIN VISUALIZATION =====
+                    st.markdown("#### 📈 Performance: Training vs Test Period")
+                    
+                    fig = go.Figure()
+                    
+                    for i, (strategy_key, result) in enumerate(wf_results.items()):
+                        color = CHART_COLORS[i % len(CHART_COLORS)]
+                        
+                        # Training period - solid line
+                        fig.add_trace(go.Scatter(
+                            x=result['train_cumulative'].index,
+                            y=(result['train_cumulative'] - 1) * 100,
+                            mode='lines',
+                            name=f"{result['name']} (Train)",
+                            line=dict(color=color, width=2.5),
+                            legendgroup=strategy_key,
+                            hovertemplate=f"<b>{result['name']} - Train</b><br>Date: %{{x}}<br>Return: %{{y:.2f}}%<extra></extra>"
+                        ))
+                        
+                        # Test period - dashed line, same color
+                        fig.add_trace(go.Scatter(
+                            x=result['test_cumulative_chained'].index,
+                            y=(result['test_cumulative_chained'] - 1) * 100,
+                            mode='lines',
+                            name=f"{result['name']} (Test)",
+                            line=dict(color=color, width=3, dash='dot'),
+                            legendgroup=strategy_key,
+                            hovertemplate=f"<b>{result['name']} - Test</b><br>Date: %{{x}}<br>Return: %{{y:.2f}}%<extra></extra>"
+                        ))
+                    
+                    # Vertical line at split point
+                    fig.add_vline(
+                        x=train_end_date,
+                        line_dash="dash",
+                        line_color="rgba(255, 255, 255, 0.8)",
+                        line_width=2
+                    )
+                    
+                    # Annotation for split
+                    fig.add_annotation(
+                        x=train_end_date,
+                        y=1.05,
+                        yref="paper",
+                        text="◄ OPTIMIZATION | VALIDATION ►",
+                        showarrow=False,
+                        font=dict(size=11, color="white"),
+                        bgcolor="rgba(99, 102, 241, 0.8)",
+                        borderpad=4
+                    )
+                    
+                    # Shaded test region
+                    fig.add_vrect(
+                        x0=test_start_date,
+                        x1=analyzer.returns.index[-1],
+                        fillcolor="rgba(99, 102, 241, 0.1)",
+                        layer="below",
+                        line_width=0
+                    )
+                    
+                    fig.add_hline(y=0, line_dash="dot", line_color="rgba(255,255,255,0.3)")
+                    
+                    fig.update_layout(
+                        height=550,
+                        xaxis_title="Date",
+                        yaxis_title="Cumulative Return (%)",
+                        hovermode='x unified',
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.08,
+                            xanchor="center",
+                            x=0.5,
+                            font=dict(size=10)
+                        ),
+                        margin=dict(t=80)
+                    )
+                    
+                    fig = apply_plotly_theme(fig)
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    st.markdown("""
+                    <div style='text-align: center; color: var(--text-secondary); font-size: 0.85rem; margin-top: -10px;'>
+                        <strong>Solid lines</strong> = Training period (weights optimized here) | 
+                        <strong>Dotted lines</strong> = Test period (weights frozen, performance measured)
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown("---")
+                    
+                    # ===== METRICS COMPARISON TABLE =====
+                    st.markdown("#### 📊 Train vs Test Metrics")
+                    
+                    comparison_data = []
+                    
+                    for strategy_key, result in wf_results.items():
+                        train = result['train_metrics']
+                        test = result['test_metrics']
+                        stability = result['sharpe_stability']
+                        
+                        # Stability indicator
+                        if stability > 0.8:
+                            stab_icon = "🟢"
+                        elif stability > 0.5:
+                            stab_icon = "🟡"
+                        elif stability > 0:
+                            stab_icon = "🟠"
+                        else:
+                            stab_icon = "🔴"
+                        
+                        comparison_data.append({
+                            'Strategy': result['name'],
+                            'Train Return': f"{train['return']*100:.2f}%",
+                            'Test Return': f"{test['return']*100:.2f}%",
+                            'Δ Return': f"{(test['return'] - train['return'])*100:+.2f}%",
+                            'Train Sharpe': f"{train['sharpe']:.3f}",
+                            'Test Sharpe': f"{test['sharpe']:.3f}",
+                            'Stability': f"{stab_icon} {stability:.2f}"
+                        })
+                    
+                    comparison_df = pd.DataFrame(comparison_data)
+                    st.markdown(create_styled_table(comparison_df, "Performance Comparison"), unsafe_allow_html=True)
+                    
+                    st.markdown("""
+                    **Stability Ratio** = Test Sharpe ÷ Train Sharpe
+                    - 🟢 **> 0.8**: Excellent stability
+                    - 🟡 **0.5 - 0.8**: Moderate degradation  
+                    - 🟠 **0 - 0.5**: Significant degradation
+                    - 🔴 **< 0**: Strategy failed out-of-sample
+                    """)
+                    
+                    st.markdown("---")
+                    
+                    # ===== STABILITY RANKING =====
+                    st.markdown("#### 🎯 Stability Ranking")
+                    
+                    col1, col2 = st.columns([1.5, 1])
+                    
+                    with col1:
+                        # Bar chart
+                        sorted_results = sorted(wf_results.items(), key=lambda x: x[1]['sharpe_stability'], reverse=True)
+                        
+                        strategies_sorted = [r[1]['name'] for r in sorted_results]
+                        stabilities_sorted = [r[1]['sharpe_stability'] for r in sorted_results]
+                        colors_sorted = [
+                            '#4ECDC4' if s > 0.8 else '#FFE66D' if s > 0.5 else '#FF9F43' if s > 0 else '#FF6B6B' 
+                            for s in stabilities_sorted
+                        ]
+                        
+                        fig_stab = go.Figure()
+                        
+                        fig_stab.add_trace(go.Bar(
+                            x=strategies_sorted,
+                            y=stabilities_sorted,
+                            marker_color=colors_sorted,
+                            text=[f"{s:.2f}" for s in stabilities_sorted],
+                            textposition='outside',
+                            textfont=dict(color='#E2E8F0', size=11)
+                        ))
+                        
+                        fig_stab.add_hline(y=1.0, line_dash="dash", line_color="rgba(255,255,255,0.5)",
+                                        annotation_text="Perfect", annotation_position="right")
+                        fig_stab.add_hline(y=0.8, line_dash="dot", line_color="#4ECDC4")
+                        fig_stab.add_hline(y=0, line_color="rgba(255,255,255,0.3)")
+                        
+                        fig_stab.update_layout(
+                            height=350,
+                            yaxis_title="Stability Ratio",
+                            xaxis_title="",
+                            showlegend=False
+                        )
+                        
+                        fig_stab = apply_plotly_theme(fig_stab)
+                        st.plotly_chart(fig_stab, use_container_width=True)
+                    
+                    with col2:
+                        st.markdown("##### 🏆 Summary")
+                        
+                        best_stability = sorted_results[0]
+                        worst_stability = sorted_results[-1]
+                        best_test_sharpe = max(wf_results.items(), key=lambda x: x[1]['test_metrics']['sharpe'])
+                        
+                        st.metric(
+                            "Most Stable",
+                            best_stability[1]['name'].split()[0],
+                            f"Ratio: {best_stability[1]['sharpe_stability']:.2f}"
+                        )
+                        
+                        st.metric(
+                            "Best Test Sharpe",
+                            best_test_sharpe[1]['name'].split()[0],
+                            f"{best_test_sharpe[1]['test_metrics']['sharpe']:.3f}"
+                        )
+                        
+                        st.metric(
+                            "Least Stable",
+                            worst_stability[1]['name'].split()[0],
+                            f"Ratio: {worst_stability[1]['sharpe_stability']:.2f}",
+                            delta_color="inverse"
+                        )
+                    
+                    st.markdown("---")
+                    
+                    # ===== INTERPRETATION =====
+                    with st.expander("💡 How to Interpret These Results", expanded=False):
+                        st.markdown(f"""
+                        ### What This Analysis Shows
+                        
+                        We simulated what would have happened if you had:
+                        
+                        1. **Optimized** each strategy using data up to **{train_end_date.strftime('%B %d, %Y')}**
+                        2. **Invested** with those frozen weights from **{test_start_date.strftime('%B %d, %Y')}** onwards
+                        3. **Measured** how well the optimization held up on unseen data
+                        
+                        ---
+                        
+                        ### Why Strategies Degrade Out-of-Sample
+                        
+                        Most optimization strategies show some degradation because:
+                        
+                        - **Estimation error**: Historical returns/covariances don't perfectly predict the future
+                        - **Regime changes**: Market conditions may shift between train and test periods
+                        - **Overfitting**: Complex strategies may fit noise rather than signal
+                        
+                        > DeMiguel et al. (2009) showed that ~250 years of data would be needed for 
+                        > mean-variance optimization to reliably outperform simple equal weighting.
+                        
+                        ---
+                        
+                        ### What to Look For
+                        
+                        ✅ **Stability > 0.8**: Strategy is robust—likely to perform similarly in the future
+                        
+                        ⚠️ **Stability 0.5-0.8**: Some degradation—be cautious with expectations
+                        
+                        🚨 **Stability < 0.5**: Significant overfitting—the strategy may not be reliable
+                        
+                        ---
+                        
+                        ### Key Insight
+                        
+                        Simpler strategies (Equal Weight, Risk Parity) often show **better stability** 
+                        because they have less parameters to overfit. This is the classic 
+                        **bias-variance tradeoff** in action.
+                        """)
+                    
+                    st.markdown("---")
+            
+            # ================================================================
+            # SECTION 2: ADVANCED CPCV ANALYSIS (EXISTING)
+            # ================================================================
+            st.markdown("## 🔬 Advanced: Combinatorial Purged Cross-Validation")
+            
+            st.markdown("""
+            For a more rigorous statistical analysis, CPCV tests strategies across **multiple** 
+            train/test combinations with embargo periods to prevent information leakage.
+            
+            This provides a **distribution** of out-of-sample performance rather than a single point estimate.
+            """)
+            
+            with st.expander("📚 What is CPCV? (Technical Details)", expanded=False):
+                st.markdown("""
                 ### Combinatorial Purged Cross-Validation
                 
-                **Notation:**
-                - $T = \{t_1, t_2, ..., t_N\}$ = time series of dates
-                - $K$ = number of folds
-                - $N^*$ = number of test folds per split
+                CPCV is a validation framework from **Marcos López de Prado's "Advances in Financial 
+                Machine Learning" (2018, Chapter 7)**.
                 
-                **Algorithm:**
+                **How it works:**
                 
-                1. **Partition** $T$ into $K$ consecutive folds: $T = F_1 \cup F_2 \cup ... \cup F_K$
-                
-                2. **Generate** all $\binom{K}{N^*}$ combinations of test folds
-                
-                3. **For each combination** $\mathcal{C} = \{i_1, ..., i_{N^*}\}$:
-                
-                - **Test set:** $T_{test} = F_{i_1} \cup ... \cup F_{i_{N^*}}$
-                
-                - **Embargo set:** $E = \{t \in T : t > \max(T_{test}), t \leq \max(T_{test}) + \delta\}$  
-                    where $\delta$ is the embargo period
-                
-                - **Train set:** $T_{train} = T \setminus (T_{test} \cup E)$
-                
-                4. **Optimize** portfolio weights $w^*$ on $T_{train}$:
-                
-                $$w^* = \arg\max_w \text{Objective}(R_{train}, w)$$
-                
-                5. **Evaluate** on $T_{test}$:
-                
-                $$\text{Performance}_{OOS} = f(R_{test} \cdot w^*)$$
-                
-                ---
-                
-                ### Risk-Adjusted Performance Metrics
-                
-                Let $r_t$ be the portfolio return at time $t$, and $r_f$ the risk-free rate.
-                
-                **Sharpe Ratio:**
-                $$\text{Sharpe} = \frac{\mathbb{E}[r_t - r_f]}{\sigma[r_t]} \times \sqrt{252}$$
-                
-                - Measures return per unit of **total volatility**
-                - Assumes normally distributed returns
-                - **Limitation:** Penalizes upside volatility equally with downside
-                
-                **Sortino Ratio** (recommended):
-                $$\text{Sortino} = \frac{\mathbb{E}[r_t - r_f]}{\sigma^-[r_t]} \times \sqrt{252}$$
-                
-                where $\sigma^-[r_t] = \sqrt{\mathbb{E}[\min(r_t - r_f, 0)^2]}$ is the **downside deviation**.
-                
-                - Only penalizes **downside volatility**
-                - More aligned with investor preferences
-                - Better for asymmetric return distributions
-                
-                **Calmar Ratio** (recommended):
-                $$\text{Calmar} = \frac{\text{Annualized Return}}{\text{Maximum Drawdown}}$$
-                
-                where Maximum Drawdown is:
-                $$\text{MDD} = \max_{t \in [0,T]} \left[ \frac{\max_{s \leq t} V_s - V_t}{\max_{s \leq t} V_s} \right]$$
-                
-                - Measures return per unit of **worst-case loss**
-                - Directly quantifies tail risk
-                - Intuitive for risk management
-                
-                **Conditional Value at Risk (CVaR)**:
-                $$\text{CVaR}_\alpha = \mathbb{E}[r_t \mid r_t \leq \text{VaR}_\alpha]$$
-                
-                - Average of the worst $\alpha$% of returns
-                - Captures tail risk beyond VaR
-                - Used in Basel III regulations
+                1. **Split time into K folds** (e.g., 5 periods)
+                2. **Create all possible train/test combinations** (e.g., 10 different splits)
+                3. **For each split:**
+                - Optimize strategy on training data only
+                - Apply **embargo** after test period to prevent leakage
+                - Evaluate performance on held-out test data
+                4. **Aggregate results** to get a distribution of out-of-sample performance
                 
                 ---
                 
                 ### Probability of Backtest Overfitting (PBO)
                 
-                **Definition:** The probability that the strategy with the best in-sample performance 
-                actually underperforms out-of-sample.
+                PBO measures how often the strategy that looks best in-sample actually 
+                underperforms out-of-sample.
                 
-                **Algorithm:**
-                
-                1. For each split $s$, rank all strategies by **in-sample** metric → get best strategy $\pi_s^{IS}$
-                
-                2. Find the **out-of-sample rank** $R_s^{OOS}$ of strategy $\pi_s^{IS}$
-                
-                3. Compute the probability:
-                
-                $$\text{PBO} = P\left(R^{OOS} > \frac{M+1}{2}\right)$$
-                
-                where $M$ is the number of strategies.
-                
-                **Interpretation:**
                 - **PBO < 10%**: Excellent - strategy selection is robust
                 - **PBO < 30%**: Acceptable - results are reliable
                 - **PBO > 50%**: Warning - severe overfitting detected
                 
-                **Reference:** Bailey, D. H., & López de Prado, M. (2014). "The Probability of Backtest Overfitting." 
-                *Journal of Computational Finance*, 20(4).
+                ---
                 
+                ### Embargo
+                
+                The embargo removes a buffer of data immediately **after** the test period 
+                to prevent information leakage due to autocorrelation in financial data.
+                
+                ---
+                
+                📖 **Reference**: López de Prado, M. (2018). *Advances in Financial Machine Learning*. Wiley.
                 """)
             
-            st.markdown("---")
-            st.markdown("## ⚙️ Configuration")
-
-            # ==========================
-            # CONFIGURATION
-            # ==========================
-            col1, col2 = st.columns(2)
+            # CPCV Configuration
+            st.markdown("#### ⚙️ CPCV Configuration")
+            
+            col1, col2, col3 = st.columns(3)
+            
             with col1:
-                n_splits = st.selectbox("Number of folds (K)", [5, 6, 8], index=0)
+                n_splits = st.selectbox(
+                    "Number of folds (K)", 
+                    [5, 6, 8, 10], 
+                    index=0,
+                    key="cpcv_splits",
+                    help="More folds = more combinations but smaller test sets"
+                )
+            
             with col2:
-                n_test_splits = st.selectbox("Test folds per split", [1, 2], index=1)
-
-            embargo_pct = st.slider(
-                "Embargo (% of dataset)",
-                min_value=0.0,
-                max_value=5.0,
-                value=1.0,
-                step=0.25
-            ) / 100
-            st.caption(
-                "🛑 **Embargo** removes a buffer of data *after* the test period to prevent "
-                "information leakage due to autocorrelation. \n\n"
-                "An embargo of **1%–5%** means that data immediately following the test window "
-                "is excluded from training. Higher values make validation more conservative."
-            )
-
-            methods_to_test = st.multiselect(
-                "Strategies",
-                ["equal", "min_vol", "max_sharpe", "risk_parity"],
-                default=["equal", "min_vol", "max_sharpe", "risk_parity"]
-            )
-
+                n_test_splits = st.selectbox(
+                    "Test folds per split", 
+                    [1, 2, 3], 
+                    index=1,
+                    key="cpcv_test_splits",
+                    help="How many folds to use as test set in each combination"
+                )
+            
+            with col3:
+                embargo_pct = st.slider(
+                    "Embargo (%)",
+                    min_value=0.0,
+                    max_value=5.0,
+                    value=1.0,
+                    step=0.5,
+                    key="cpcv_embargo",
+                    help="Buffer removed after test period to prevent leakage"
+                ) / 100
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                cpcv_methods = st.multiselect(
+                    "Strategies to test",
+                    ["equal", "min_vol", "max_sharpe", "risk_parity"],
+                    default=["equal", "min_vol", "max_sharpe", "risk_parity"],
+                    key="cpcv_methods"
+                )
+            
+            with col2:
+                primary_metric = st.selectbox(
+                    "Primary metric for PBO",
+                    ["sharpe", "sortino", "calmar"],
+                    index=1,
+                    key="cpcv_metric",
+                    help="The metric used to calculate Probability of Backtest Overfitting"
+                )
+            
             method_names = {
                 "equal": "Equally Weighted",
                 "min_vol": "Minimum Volatility",
                 "max_sharpe": "Maximum Sharpe",
-                "risk_parity": "Risk Parity",
-                "max_return": "Maximum Return",
-                "hrp": "Hierarchical Risk Parity"
+                "risk_parity": "Risk Parity"
             }
-
-            # Primary metric for PBO calculation
-            primary_metric = st.selectbox(
-                "Primary metric for PBO",
-                ["sharpe", "sortino", "calmar"],
-                index=1,
-                help="The metric used to calculate Probability of Backtest Overfitting"
-            )
-
-            # ==========================
-            # ROBUST METRICS CALCULATOR
-            # ==========================
-            def calculate_robust_metrics(returns, rf_rate=0.0):
-                """
-                Calculate comprehensive risk-adjusted performance metrics.
+            
+            # Run CPCV
+            if st.button("🚀 Run CPCV Analysis", use_container_width=True, key="run_cpcv"):
                 
-                Returns dictionary with:
-                - sharpe: Standard Sharpe Ratio
-                - sortino: Sortino Ratio (downside deviation)
-                - calmar: Calmar Ratio (return / max drawdown)
-                - max_drawdown: Maximum peak-to-trough decline
-                - cvar_95: Conditional Value at Risk (5% worst cases)
-                - win_rate: Percentage of positive return periods
-                """
-                if len(returns) == 0:
-                    return {
-                        'sharpe': np.nan,
-                        'sortino': np.nan,
-                        'calmar': np.nan,
-                        'max_drawdown': np.nan,
-                        'cvar_95': np.nan,
-                        'win_rate': np.nan
-                    }
-                
-                returns_excess = returns - rf_rate
-                
-                # 1. SHARPE RATIO (volatility-adjusted)
-                # Formula: (Annualized Return - Risk Free Rate) / Annualized Volatility
-                # Note: rf_rate is already annualized, so we don't multiply by 252
-                if returns.std() > 0:
-                    annual_return = returns.mean() * 252
-                    annual_vol = returns.std() * np.sqrt(252)
-                    sharpe = (annual_return - rf_rate) / annual_vol
-                else:
-                    sharpe = np.nan
-                
-                # 2. SORTINO RATIO (downside risk only)
-                # Formula: (Annualized Return - Risk Free Rate) / Annualized Downside Deviation
-                downside_returns = returns[returns < 0]
-                if len(downside_returns) > 0:
-                    annual_return = returns.mean() * 252
-                    downside_std = downside_returns.std() * np.sqrt(252)
-                    if downside_std > 0:
-                        sortino = (annual_return - rf_rate) / downside_std
-                    else:
-                        sortino = np.nan
-                else:
-                    # No negative returns - strategy never loses
-                    sortino = np.inf if returns.mean() > 0 else np.nan
-                
-                # 3. MAXIMUM DRAWDOWN
-                cumulative = (1 + returns).cumprod()
-                running_max = cumulative.expanding().max()
-                drawdown = (cumulative - running_max) / running_max
-                max_dd = abs(drawdown.min())
-                
-                # 4. CALMAR RATIO (return / max drawdown)
-                annual_return = returns.mean() * 252
-                if max_dd > 0:
-                    calmar = annual_return / max_dd
-                else:
-                    calmar = np.inf if annual_return > 0 else np.nan
-                
-                # 5. CONDITIONAL VALUE AT RISK (CVaR at 95%)
-                if len(returns) > 0:
-                    cvar_95 = returns.quantile(0.05)
-                else:
-                    cvar_95 = np.nan
-                
-                # 6. WIN RATE
-                win_rate = (returns > 0).mean()
-                
-                return {
-                    'sharpe': sharpe,
-                    'sortino': sortino,
-                    'calmar': calmar,
-                    'max_drawdown': max_dd,
-                    'cvar_95': cvar_95,
-                    'win_rate': win_rate
-                }
-
-            # ==========================
-            # CORE FUNCTIONS (AFML)
-            # ==========================
-            from itertools import combinations
-
-            def combinatorial_purged_cv(dates, n_splits, n_test_splits, embargo_pct):
-                """
-                Creates train/test splits with embargo to prevent leakage.
-                """
-                fold_size = len(dates) // n_splits
-                
-                # Validate minimum fold size
-                if fold_size < 20:
-                    raise ValueError(f"Fold size too small ({fold_size}). Reduce n_splits or use more data.")
-                
-                # Create equal-sized folds
-                folds = []
-                for i in range(n_splits):
-                    start_idx = i * fold_size
-                    end_idx = (i + 1) * fold_size if i < n_splits - 1 else len(dates)
-                    folds.append(dates[start_idx:end_idx])
-
-                splits = []
-                embargo_size = int(len(dates) * embargo_pct)
-                
-                for test_fold_indices in combinations(range(n_splits), n_test_splits):
-                    # Collect test dates
-                    test_dates = pd.Index([])
-                    for fold_idx in test_fold_indices:
-                        test_dates = test_dates.append(folds[fold_idx])
-                    test_dates = test_dates.sort_values()
-                    
-                    # Start with all non-test dates
-                    train_dates = dates.difference(test_dates)
-                    
-                    # Apply embargo: remove dates AFTER test period
-                    if embargo_size > 0 and len(test_dates) > 0:
-                        test_end = test_dates.max()
-                        embargo_dates = dates[(dates > test_end)][:embargo_size]
-                        train_dates = train_dates.difference(embargo_dates)
-                    
-                    # Validate split
-                    if len(train_dates) < 50 or len(test_dates) < 10:
-                        continue
-                    
-                    splits.append((train_dates.sort_values(), test_dates))
-
-                if len(splits) == 0:
-                    raise ValueError("No valid splits created. Adjust parameters.")
-                
-                return splits
-
-
-            def run_cpcv_backtest(
-                returns_df,
-                methods,
-                rf_rate,
-                n_splits=5,
-                n_test_splits=2,
-                embargo_pct=0.01
-            ):
-                """
-                Run combinatorial purged cross-validation with multi-metric evaluation.
-                """
-                splits = combinatorial_purged_cv(
-                    returns_df.index,
-                    n_splits,
-                    n_test_splits,
-                    embargo_pct
-                )
-
-                # Store all metrics for both IS and OOS
-                is_metrics_all = {m: [] for m in methods}
-                oos_metrics_all = {m: [] for m in methods}
-                oos_returns = {m: [] for m in methods}
-                
-                n_splits_total = len(splits)
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                for split_idx, (train_idx, test_idx) in enumerate(splits):
-                    progress_bar.progress((split_idx + 1) / n_splits_total)
-                    status_text.text(f"Processing split {split_idx + 1}/{n_splits_total}...")
-                    
-                    train_returns = returns_df.loc[train_idx]
-                    test_returns = returns_df.loc[test_idx]
-
-                    for method in methods:
-                        try:
-                            # Optimize on training data
-                            weights = optimize_portfolio_weights(
-                                train_returns,
-                                method=method,
-                                rf_rate=rf_rate
-                            )
-                            
-                            # Evaluate on IN-SAMPLE (training data)
-                            train_portfolio_returns = train_returns.dot(weights)
-                            is_metrics = calculate_robust_metrics(
-                                train_portfolio_returns,
-                                rf_rate=rf_rate
-                            )
-                            is_metrics_all[method].append(is_metrics)
-                            
-                            # Evaluate on OUT-OF-SAMPLE (test data)
-                            test_portfolio_returns = test_returns.dot(weights)
-                            oos_metrics = calculate_robust_metrics(
-                                test_portfolio_returns,
-                                rf_rate=rf_rate
-                            )
-                            
-                            oos_returns[method].append(test_portfolio_returns)
-                            oos_metrics_all[method].append(oos_metrics)
-                            
-                        except Exception as e:
-                            st.warning(f"Split {split_idx+1}: {method} failed - {str(e)}")
-                            # Append NaN metrics
-                            nan_metrics = {k: np.nan for k in ['sharpe', 'sortino', 'calmar', 'max_drawdown', 'cvar_95', 'win_rate']}
-                            is_metrics_all[method].append(nan_metrics)
-                            oos_metrics_all[method].append(nan_metrics)
-                            continue
-                
-                progress_bar.empty()
-                status_text.empty()
-
-                return is_metrics_all, oos_metrics_all, oos_returns
-
-
-            def compute_pbo(is_metrics, oos_metrics, metric_name='sharpe'):
-                """
-                Compute Probability of Backtest Overfitting for specified metric.
-                """
-                # Extract metric values
-                is_values = {method: [m[metric_name] for m in metrics] 
-                            for method, metrics in is_metrics.items()}
-                oos_values = {method: [m[metric_name] for m in metrics] 
-                            for method, metrics in oos_metrics.items()}
-                
-                is_df = pd.DataFrame(is_values).dropna()
-                oos_df = pd.DataFrame(oos_values).dropna()
-                
-                if len(is_df) == 0 or len(oos_df) == 0:
-                    return np.nan
-                
-                # Ensure same splits
-                common_idx = is_df.index.intersection(oos_df.index)
-                is_df = is_df.loc[common_idx]
-                oos_df = oos_df.loc[common_idx]
-                
-                n_strategies = len(is_df.columns)
-                
-                # For each split, find best IS strategy
-                is_ranks = is_df.rank(axis=1, ascending=False)
-                best_is_strategy = is_ranks.idxmin(axis=1)
-                
-                # Get OOS rank of that strategy
-                oos_ranks = oos_df.rank(axis=1, ascending=False)
-                oos_rank_of_best_is = np.array([
-                    oos_ranks.loc[idx, best_is_strategy[idx]] 
-                    for idx in common_idx
-                ])
-                
-                # PBO: probability that best IS has OOS rank > n/2
-                median_rank = (n_strategies + 1) / 2
-                pbo = np.mean(oos_rank_of_best_is > median_rank)
-                
-                return pbo
-
-
-            # ==========================
-            # RUN BACKTEST
-            # ==========================
-            if st.button("🚀 Run Multi-Metric Validation", use_container_width=True):
-                if not methods_to_test:
-                    st.error("Select at least one strategy.")
-                elif len(methods_to_test) < 2:
-                    st.error("Select at least 2 strategies for meaningful comparison.")
+                if len(cpcv_methods) < 2:
+                    st.error("⚠️ Select at least 2 strategies for meaningful comparison.")
                 else:
                     with st.spinner("Running Combinatorial Purged Cross-Validation..."):
                         try:
                             is_metrics_all, oos_metrics_all, oos_returns = run_cpcv_backtest(
                                 analyzer.returns,
-                                methods_to_test,
+                                cpcv_methods,
                                 rf_rate,
                                 n_splits,
                                 n_test_splits,
@@ -3623,385 +3688,148 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             
                             pbo = compute_pbo(is_metrics_all, oos_metrics_all, primary_metric)
                             
-                            n_valid_splits = len([m for m in oos_metrics_all[methods_to_test[0]] 
+                            n_valid_splits = len([m for m in oos_metrics_all[cpcv_methods[0]] 
                                                 if not np.isnan(m['sharpe'])])
-                            st.success(f"✅ Validation completed ({n_valid_splits} valid splits)")
                             
-                        except ValueError as e:
-                            st.error(f"Configuration error: {str(e)}")
-                            st.stop()
+                            st.success(f"✅ CPCV completed ({n_valid_splits} valid splits)")
+                            
+                            # Store results
+                            st.session_state.cpcv_results = {
+                                'is_metrics': is_metrics_all,
+                                'oos_metrics': oos_metrics_all,
+                                'pbo': pbo,
+                                'n_splits': n_valid_splits,
+                                'methods': cpcv_methods,
+                                'metric': primary_metric
+                            }
+                            
                         except Exception as e:
-                            st.error(f"Unexpected error: {str(e)}")
-                            st.stop()
-
-                    st.markdown("---")
-
-                    # ==========================
-                    # PBO METRIC
-                    # ==========================
-                    st.markdown(f"#### 📉 Probability of Backtest Overfitting ({primary_metric.title()})")
-                    
+                            st.error(f"❌ CPCV failed: {str(e)}")
+            
+            # Display CPCV results
+            if 'cpcv_results' in st.session_state and st.session_state.cpcv_results:
+                
+                cpcv = st.session_state.cpcv_results
+                pbo = cpcv['pbo']
+                oos_metrics_all = cpcv['oos_metrics']
+                cpcv_methods = cpcv['methods']
+                
+                st.markdown("---")
+                
+                # PBO Display
+                st.markdown("#### 📉 Probability of Backtest Overfitting")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
                     if np.isnan(pbo):
-                        st.warning("⚠️ PBO could not be calculated (insufficient valid splits)")
+                        st.warning("PBO could not be calculated")
                     else:
-                        if pbo < 0.1:
-                            delta_color = "normal"
-                            delta_text = "Excellent"
-                        elif pbo < 0.3:
-                            delta_color = "normal"
-                            delta_text = "Good"
-                        else:
-                            delta_color = "inverse"
-                            delta_text = "Warning"
-                        
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("PBO", f"{pbo:.1%}", delta_text, delta_color=delta_color)
-                        with col2:
-                            st.metric("Primary Metric", primary_metric.title())
-                        with col3:
-                            st.metric("Valid Splits", n_valid_splits)
-                        
-                        st.caption(
-                            f"📉 **PBO** measures how often the strategy that looks best in {primary_metric} "
-                            "during training actually underperforms out-of-sample. \n\n"
-                            "**< 10%** = Excellent | **< 30%** = Acceptable | **> 50%** = Severe overfitting"
-                        )
-                    st.markdown("---")
-
-                    # ==========================
-                    # MULTI-METRIC DISTRIBUTIONS
-                    # ==========================
-                    st.markdown("#### 📊 Out-of-Sample Performance Distributions")
-                    
-                    metric_display = {
-                        'sharpe': 'Sharpe Ratio',
-                        'sortino': 'Sortino Ratio',
-                        'calmar': 'Calmar Ratio',
-                        'max_drawdown': 'Max Drawdown (%)'
-                    }
-                    
-                    # Create tabs for each metric
-                    metric_tabs = st.tabs(list(metric_display.values()))
-                    
-                    for tab_idx, (metric_key, metric_name) in enumerate(metric_display.items()):
-                        with metric_tabs[tab_idx]:
-                            fig = go.Figure()
-                            
-                            for i, method in enumerate(methods_to_test):
-                                values = [m[metric_key] for m in oos_metrics_all[method] 
-                                        if not np.isnan(m[metric_key])]
-                                
-                                # Handle special case for max_drawdown (convert to %)
-                                if metric_key == 'max_drawdown':
-                                    values = [v * 100 for v in values]
-                                
-                                if len(values) > 0:
-                                    fig.add_trace(go.Box(
-                                        y=values,
-                                        name=method_names.get(method, method),
-                                        boxmean='sd',
-                                        marker_color=CHART_COLORS[i % len(CHART_COLORS)]
-                                    ))
-                            
-                            y_title = metric_name
-                            if metric_key == 'max_drawdown':
-                                y_title += ' (lower is better)'
-                            
-                            fig.update_layout(
-                                height=400,
-                                yaxis_title=y_title,
-                                showlegend=False
-                            )
-                            st.plotly_chart(apply_plotly_theme(fig), use_container_width=True)
-                    
-                    st.markdown("---")
-
-                    # ==========================
-                    # COMPREHENSIVE RANKING TABLE (NUOVO STILE)
-                    # ==========================
-                    st.markdown("#### 🏆 Comprehensive Multi-Metric Ranking")
-
-                    ranking_data = []
-                    ranking_data_raw = []  # Per il sorting
-                    
-                    for method in methods_to_test:
-                        metrics_list = oos_metrics_all[method]
-                        
-                        # Extract each metric
-                        sharpes = [m['sharpe'] for m in metrics_list if not np.isnan(m['sharpe'])]
-                        sortinos = [m['sortino'] for m in metrics_list if not np.isnan(m['sortino']) and not np.isinf(m['sortino'])]
-                        calmars = [m['calmar'] for m in metrics_list if not np.isnan(m['calmar']) and not np.isinf(m['calmar'])]
-                        max_dds = [m['max_drawdown'] for m in metrics_list if not np.isnan(m['max_drawdown'])]
-                        cvars = [m['cvar_95'] for m in metrics_list if not np.isnan(m['cvar_95'])]
-                        win_rates = [m['win_rate'] for m in metrics_list if not np.isnan(m['win_rate'])]
-                        
-                        if len(sharpes) > 0:
-                            # Raw data for sorting
-                            raw_sharpe = np.median(sharpes)
-                            raw_sortino = np.median(sortinos) if sortinos else np.nan
-                            raw_calmar = np.median(calmars) if calmars else np.nan
-                            
-                            ranking_data_raw.append({
-                                "method": method,
-                                "sharpe": raw_sharpe,
-                                "sortino": raw_sortino,
-                                "calmar": raw_calmar
-                            })
-                            
-                            # Formatted data for display
-                            ranking_data.append({
-                                "method": method,
-                                "Strategy": method_names.get(method, method),
-                                "Sharpe": f"{raw_sharpe:.3f}",
-                                "Sortino": f"{raw_sortino:.3f}" if not np.isnan(raw_sortino) else "N/A",
-                                "Calmar": f"{raw_calmar:.3f}" if not np.isnan(raw_calmar) else "N/A",
-                                "Max DD": f"{np.max(max_dds)*100:.2f}%" if max_dds else "N/A",
-                                "CVaR (5%)": f"{np.median(cvars)*100:.2f}%" if cvars else "N/A",
-                                "Win Rate": f"{np.mean(win_rates)*100:.1f}%" if win_rates else "N/A"
-                            })
-
-                    # Sort by primary metric using raw data
-                    metric_map = {'sharpe': 'sharpe', 'sortino': 'sortino', 'calmar': 'calmar'}
-                    sort_key = metric_map.get(primary_metric, 'sharpe')
-                    
-                    # Sort raw data
-                    ranking_data_raw.sort(key=lambda x: x[sort_key] if not np.isnan(x[sort_key]) else -999, reverse=True)
-                    
-                    # Reorder display data based on sorted raw data
-                    method_order = [item['method'] for item in ranking_data_raw]
-                    ranking_data = sorted(ranking_data, key=lambda x: method_order.index(x['method']))
-
-                    # Add rank icons
-                    for i, row in enumerate(ranking_data):
-                        icon = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else "📊"
-                        row['#'] = f"{icon} {i+1}"
-
-                    # Create DataFrame with proper column order
-                    ranking_df = pd.DataFrame(ranking_data)
-                    cols = ['#', 'Strategy', 'Sharpe', 'Sortino', 'Calmar', 'Max DD', 'CVaR (5%)', 'Win Rate']
-                    ranking_df = ranking_df[cols]
-
-                    # Display styled table
-                    st.markdown(create_styled_table(ranking_df, f"Ranked by {primary_metric.title()} (Median OOS)"), unsafe_allow_html=True)
-
-                    st.caption(
-                        f"📊 Rankings are based on median OOS performance across all splits. "
-                        f"Sorted by **{primary_metric.title()}**."
-                    )
-
-                    # ==========================
-                    # METRIC INTERPRETATION GUIDE
-                    # ==========================
-                    with st.expander("📖 How to Interpret These Metrics"):
-                        st.markdown("""
-                        ### Risk-Adjusted Performance Metrics
-                        
-                        **Sharpe Ratio**
-                        - Measures return per unit of total volatility
-                        - Higher is better (> 1.0 is good, > 2.0 is excellent)
-                        - ⚠️ Limitation: Penalizes upside volatility equally with downside
-                        
-                        **Sortino Ratio** ⭐ *Recommended*
-                        - Measures return per unit of *downside* volatility only
-                        - Higher is better
-                        - ✅ Advantage: Only penalizes losses, not gains
-                        - Better for strategies with asymmetric returns
-                        
-                        **Calmar Ratio** ⭐ *Recommended*
-                        - Annual return divided by maximum drawdown
-                        - Higher is better
-                        - ✅ Advantage: Directly measures worst-case scenario risk
-                        - Intuitive for investors: "return per unit of pain"
-                        
-                        **Maximum Drawdown**
-                        - Largest peak-to-trough decline
-                        - Lower is better
-                        - Critical for psychological sustainability
-                        - Hedge funds typically target < 20%
-                        
-                        **CVaR (Conditional Value at Risk)**
-                        - Average of the worst 5% of returns
-                        - More negative = higher tail risk
-                        - Captures "black swan" events better than Sharpe
-                        
-                        **Win Rate**
-                        - Percentage of positive return periods
-                        - Higher is better
-                        - ⚠️ Not sufficient alone (small wins + big losses can have high win rate)
-                        
-                        ### Best Practice
-                        Use **multiple metrics** together:
-                        - High Sortino/Calmar = robust risk-adjusted returns
-                        - Low Max Drawdown = sustainable strategy
-                        - Moderate CVaR = controlled tail risk
-                        """)
-
-                    st.markdown("---")
-
-                    # ==========================
-                    # STRATEGY-SPECIFIC ANALYSIS (STILE TABELLA)
-                    # ==========================
-                    st.markdown("### 🔍 Strategy-Specific Analysis")
-                    
-                    if len(ranking_data_raw) > 0:
-                        # Get best and worst strategies from raw data
-                        best_method = ranking_data_raw[0]['method']
-                        best_name = method_names.get(best_method, best_method)
-                        
-                        # Find formatted data for best strategy
-                        best_data = next((item for item in ranking_data if item['method'] == best_method), None)
-                        
-                        col1, col2 = st.columns([1, 1])
-                        
-                        with col1:
-                            st.markdown(f"#### 🥇 Top Strategy: {best_name}")
-                            
-                            if best_data:
-                                # Create compact table for top strategy
-                                top_strategy_data = {
-                                    'Metric': ['Sharpe', 'Sortino', 'Calmar', 'Max DD', 'CVaR (5%)', 'Win Rate'],
-                                    'Value': [
-                                        best_data['Sharpe'],
-                                        best_data['Sortino'],
-                                        best_data['Calmar'],
-                                        best_data['Max DD'],
-                                        best_data['CVaR (5%)'],
-                                        best_data['Win Rate']
-                                    ]
-                                }
-                                st.markdown(create_styled_table(pd.DataFrame(top_strategy_data)), unsafe_allow_html=True)
-                        
-                        with col2:
-                            if len(ranking_data_raw) > 1:
-                                worst_method = ranking_data_raw[-1]['method']
-                                worst_name = method_names.get(worst_method, worst_method)
-                                
-                                st.markdown(f"#### 📊 vs. {worst_name}")
-                                
-                                best_sortino = ranking_data_raw[0]['sortino']
-                                worst_sortino = ranking_data_raw[-1]['sortino']
-                                
-                                # Get max_dd from original data
-                                best_max_dd = None
-                                worst_max_dd = None
-                                
-                                for method in methods_to_test:
-                                    metrics_list = oos_metrics_all[method]
-                                    max_dds = [m['max_drawdown'] for m in metrics_list if not np.isnan(m['max_drawdown'])]
-                                    
-                                    if method == best_method and max_dds:
-                                        best_max_dd = np.max(max_dds) * 100
-                                    elif method == worst_method and max_dds:
-                                        worst_max_dd = np.max(max_dds) * 100
-                                
-                                if not np.isnan(best_sortino) and not np.isnan(worst_sortino) and best_max_dd is not None and worst_max_dd is not None:
-                                    sortino_diff = best_sortino - worst_sortino
-                                    dd_diff = worst_max_dd - best_max_dd
-                                    
-                                    comparison_data = {
-                                        'Metric': ['Sortino Advantage', 'DD Advantage (pp)'],
-                                        'Value': [
-                                            f"+{sortino_diff:.2f} ({sortino_diff/worst_sortino*100:+.1f}%)" if worst_sortino != 0 else f"+{sortino_diff:.2f}",
-                                            f"{dd_diff:.1f}pp"
-                                        ]
-                                    }
-                                    st.markdown(create_styled_table(pd.DataFrame(comparison_data)), unsafe_allow_html=True)
-                                    
-                                    if sortino_diff > 0.3 and dd_diff > 10:
-                                        st.success("✅ Superior risk-adjusted returns with lower tail risk")
-                                    elif sortino_diff > 0.3:
-                                        st.info("📊 Superior risk-adjusted returns")
-                                    elif dd_diff > 10:
-                                        st.info("📊 Significantly lower tail risk")
-                                    else:
-                                        st.warning("⚠️ Comparable performance profiles")
-
-                    st.markdown("---")
-
-                    # ==========================
-                    # FINAL INTERPRETATION
-                    # ==========================
-                    st.markdown("## 🎯 Final Takeaway")
-
-                    # Determine overall assessment
-                    if not np.isnan(pbo):
-                        if pbo < 0.1:
-                            assessment_icon = "🟢"
-                            assessment_text = "ROBUST"
-                            assessment_detail = "Low overfitting risk. Strategies show consistent OOS performance."
-                        elif pbo < 0.3:
-                            assessment_icon = "🟡"
-                            assessment_text = "ACCEPTABLE"
-                            assessment_detail = "Moderate reliability. Monitor performance in live trading."
-                        elif pbo < 0.5:
-                            assessment_icon = "🟠"
-                            assessment_text = "CAUTION"
-                            assessment_detail = "High overfitting risk. Consider ensemble or simpler strategies."
-                        else:
-                            assessment_icon = "🔴"
-                            assessment_text = "WARNING"
-                            assessment_detail = "Severe overfitting. Strategy selection is unreliable."
-                    else:
-                        assessment_icon = "⚠️"
-                        assessment_text = "INSUFFICIENT DATA"
-                        assessment_detail = "Unable to assess overfitting risk."
-
-                    st.markdown(f"### {assessment_icon} Overall Assessment: **{assessment_text}**")
-                    st.markdown(f"*{assessment_detail}*")
-                    
-                    st.markdown("---")
-                    
-                    # Key insights in columns
-                    st.markdown("**📌 Key Insights**")
-                    
-                    insight_col1, insight_col2, insight_col3 = st.columns(3)
-                    
-                    with insight_col1:
-                        st.metric("Primary Metric", primary_metric.title())
-                    with insight_col2:
                         pbo_color = "normal" if pbo < 0.3 else "inverse"
-                        st.metric(
-                            f"PBO ({primary_metric})", 
-                            f"{pbo:.1%}",
-                            delta="Robust" if pbo < 0.3 else "Warning",
-                            delta_color=pbo_color
+                        pbo_text = "Excellent" if pbo < 0.1 else "Good" if pbo < 0.3 else "Warning"
+                        st.metric("PBO", f"{pbo:.1%}", pbo_text, delta_color=pbo_color)
+                
+                with col2:
+                    st.metric("Valid Splits", cpcv['n_splits'])
+                
+                with col3:
+                    st.metric("Primary Metric", cpcv['metric'].title())
+                
+                st.markdown("---")
+                
+                # OOS Distributions
+                st.markdown("#### 📊 Out-of-Sample Performance Distributions")
+                
+                metric_tabs = st.tabs(["Sharpe", "Sortino", "Calmar", "Max Drawdown"])
+                
+                metric_keys = ['sharpe', 'sortino', 'calmar', 'max_drawdown']
+                
+                for tab_idx, metric_key in enumerate(metric_keys):
+                    with metric_tabs[tab_idx]:
+                        fig = go.Figure()
+                        
+                        for i, method in enumerate(cpcv_methods):
+                            values = [m[metric_key] for m in oos_metrics_all[method] 
+                                    if not np.isnan(m[metric_key]) and not np.isinf(m[metric_key])]
+                            
+                            if metric_key == 'max_drawdown':
+                                values = [v * 100 for v in values]
+                            
+                            if len(values) > 0:
+                                fig.add_trace(go.Box(
+                                    y=values,
+                                    name=method_names.get(method, method),
+                                    boxmean='sd',
+                                    marker_color=CHART_COLORS[i % len(CHART_COLORS)]
+                                ))
+                        
+                        fig.update_layout(
+                            height=400,
+                            yaxis_title=metric_key.replace('_', ' ').title() + (" (%)" if metric_key == 'max_drawdown' else ""),
+                            showlegend=False
                         )
-                    with insight_col3:
-                        if len(ranking_data) > 0:
-                            st.metric("Best Strategy", ranking_data[0]['Strategy'])
+                        
+                        fig = apply_plotly_theme(fig)
+                        st.plotly_chart(fig, use_container_width=True)
+                
+                st.markdown("---")
+                
+                # Ranking Table
+                st.markdown("#### 🏆 Out-of-Sample Ranking")
+                
+                ranking_data = []
+                
+                for method in cpcv_methods:
+                    metrics = oos_metrics_all[method]
                     
-                    st.markdown("---")
+                    sharpes = [m['sharpe'] for m in metrics if not np.isnan(m['sharpe'])]
+                    sortinos = [m['sortino'] for m in metrics if not np.isnan(m['sortino']) and not np.isinf(m['sortino'])]
+                    calmars = [m['calmar'] for m in metrics if not np.isnan(m['calmar']) and not np.isinf(m['calmar'])]
+                    max_dds = [m['max_drawdown'] for m in metrics if not np.isnan(m['max_drawdown'])]
                     
-                    # Recommendations
-                    st.markdown("**💡 Recommendations**")
+                    if sharpes:
+                        ranking_data.append({
+                            'Strategy': method_names.get(method, method),
+                            'Sharpe (median)': f"{np.median(sharpes):.3f}",
+                            'Sortino (median)': f"{np.median(sortinos):.3f}" if sortinos else "N/A",
+                            'Calmar (median)': f"{np.median(calmars):.3f}" if calmars else "N/A",
+                            'Max DD (worst)': f"{np.max(max_dds)*100:.2f}%" if max_dds else "N/A"
+                        })
+                
+                if ranking_data:
+                    ranking_df = pd.DataFrame(ranking_data)
+                    st.markdown(create_styled_table(ranking_df, f"Ranked by Median OOS {cpcv['metric'].title()}"), unsafe_allow_html=True)
+                
+                st.markdown("---")
+                
+                # Interpretation
+                with st.expander("💡 How to Interpret CPCV Results", expanded=False):
+                    st.markdown(f"""
+                    ### Understanding the Results
                     
-                    rec_col1, rec_col2 = st.columns(2)
+                    **PBO = {pbo:.1%}** means that {pbo*100:.0f}% of the time, the strategy that looked 
+                    best during training actually underperformed out-of-sample.
                     
-                    with rec_col1:
-                        st.success("✅ **What to Look For:**")
-                        st.markdown("""
-                        - High **Sortino** and **Calmar** ratios
-                        - **Max DD < 40%** for sustainability
-                        - Low **CVaR** for tail risk control
-                        - Consistent performance across splits
-                        """)
+                    {"✅ **Low PBO**: Your strategy selection process is robust." if pbo < 0.3 else "⚠️ **High PBO**: There may be significant overfitting in your strategy selection."}
                     
-                    with rec_col2:
-                        st.warning("⚠️ **Red Flags:**")
-                        st.markdown("""
-                        - **PBO > 30%** indicates overfitting
-                        - Large dispersion in OOS metrics
-                        - Extreme Sharpe values (> 3.0)
-                        - Strategy works only in specific regimes
-                        """)
+                    ---
                     
-                    st.info("""
-                    **🎓 Remember:**
-                    - This validation tests **robustness**, not "the best strategy"
-                    - Out-of-sample metrics are closer to real-world performance
-                    - No single metric tells the full story—consider the complete profile
-                    - Use **ensemble approaches** if multiple strategies show robustness
+                    ### What the Box Plots Show
+                    
+                    Each box represents the **distribution** of out-of-sample performance across 
+                    {cpcv['n_splits']} different train/test splits.
+                    
+                    - **Narrow boxes**: Consistent performance across different periods
+                    - **Wide boxes**: High variance—strategy is sensitive to market conditions
+                    - **Boxes above zero**: Strategy generally profitable out-of-sample
+                    
+                    ---
+                    
+                    ### Recommendations
+                    
+                    1. Prefer strategies with **tight distributions** (consistent performance)
+                    2. Watch out for strategies with high in-sample but poor out-of-sample metrics
+                    3. Consider **ensemble approaches** if multiple strategies show robustness
                     """)
 # Part 8: Frontier, Benchmark, Export, Footer
 
