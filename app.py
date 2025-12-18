@@ -1106,8 +1106,9 @@ if not st.session_state.run_analysis and st.session_state.analyzer is None:
                 st.session_state.selected_tickers = tickers
                 st.session_state.run_analysis = True
                 st.rerun()
-            # Mostra lista asset sotto il pulsante
-            st.caption(" · ".join(tickers))
+            # Mostra lista asset con nomi completi, uno per riga
+            asset_names = [get_display_name(t) for t in tickers]
+            st.caption("\n".join([f"• {name}" for name in asset_names]))
 
 # Part 3: Analysis Logic
 
