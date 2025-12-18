@@ -13,10 +13,7 @@ from scipy import stats
 from scipy.optimize import minimize
 import requests
 
-from core.metrics import (calculate_portfolio_metrics,
-optimize_portfolio_weights,
-run_walk_forward_analysis,
-get_hrp_dendrogram_data)
+from core.metrics import (calculate_portfolio_metrics, optimize_portfolio_weights, run_walk_forward_analysis, get_hrp_dendrogram_data)
 
 from core.statistics import (
     compute_autocorrelation,
