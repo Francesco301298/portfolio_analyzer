@@ -28,7 +28,6 @@ from core.statistics import fit_garch
 from core.rebalancing import calculate_portfolio_with_rebalancing
 from core.rebalancing import calculate_all_portfolios_with_costs
 
-from core.backtesting import calculate_robust_metrics
 from core.backtesting import combinatorial_purged_cv
 from core.backtesting import run_cpcv_backtest
 from core.backtesting import compute_pbo
