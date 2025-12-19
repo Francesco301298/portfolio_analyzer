@@ -2,7 +2,8 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 from scipy.optimize import minimize
-from scipy.stats import multivariate_normal, t as t_dist
+from scipy.stats import multivariate_normal
+from scipy.stats import t as t_dist
 from scipy import special
 
 try:
