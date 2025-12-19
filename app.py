@@ -3014,93 +3014,99 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             st.warning("⚠️ Could not fit GARCH model to this data")
                     else:
                         st.info("ℹ️ Install `arch` package for GARCH analysis: `pip install arch`")
-            # ================================================================
+        # ================================================================
             # SECTION 2: PORTFOLIO CORRELATION DYNAMICS
             # ================================================================
             else:  # analysis_mode == "🔗 Portfolio Correlation Dynamics"
                 
                 st.markdown("""
-                Analyze how correlations between your assets **evolve over time**. 
-                Understanding dynamic correlations is crucial because diversification benefits 
-                can disappear precisely when you need them most (during market stress).
+                ### What is this analysis for?
+                
+                This section answers a critical question for portfolio management: 
+                **"How correlated are my assets right now, and is this different from normal?"**
+                
+                Why does this matter? Because:
+                - **High correlations** → Your assets move together → Less diversification → Higher portfolio risk
+                - **Low correlations** → Your assets move independently → More diversification → Lower portfolio risk
+                
+                The problem is that correlations **change over time**, especially during market stress when 
+                you need diversification the most.
                 """)
                 
-                with st.expander("💡 Why Dynamic Correlations Matter", expanded=False):
+                with st.expander("📚 The Science Behind This Analysis", expanded=False):
                     st.markdown("""
-                    **The problem with static correlations:**
+                    We use the **Dynamic Conditional Correlation (DCC)** model from Engle (2002), 
+                    which is the industry standard for modeling time-varying correlations.
                     
-                    Traditional portfolio theory assumes correlations are constant. In reality:
-                    - Correlations **increase during market stress** ("correlation breakdown")
-                    - Diversification benefits **diminish when you need them most**
-                    - Static models **underestimate tail risk**
+                    **Why not just use rolling correlation?**
                     
-                    **The DCC (Dynamic Conditional Correlation) model:**
+                    Rolling correlation (e.g., 60-day window) has problems:
+                    1. All days in the window count equally (day 1 = day 60)
+                    2. Old observations "fall off" abruptly
+                    3. Mixes volatility effects with true correlation changes
                     
-                    Engle (2002) proposed modeling correlations as time-varying:
+                    **The DCC approach:**
+                    1. **Flexible Probabilities**: Recent data gets more weight (exponential decay)
+                    2. **GARCH filtering**: Separates volatility from correlation
+                    3. **Parametric model**: Smooth estimates with mean-reversion
                     
-                    $$Q_t = (1-a-b)\\bar{\\rho} + a \\cdot \\varepsilon_{t-1}\\varepsilon_{t-1}' + b \\cdot Q_{t-1}$$
-                    
-                    $$R_t = \\text{diag}(Q_t)^{-1/2} \\cdot Q_t \\cdot \\text{diag}(Q_t)^{-1/2}$$
-                    
-                    Where:
-                    - $\\bar{\\rho}$: Long-run (unconditional) correlation
-                    - $a$: Reaction to recent shocks
-                    - $b$: Persistence of correlation
-                    - $R_t$: Time-varying correlation matrix
-                    
-                    📖 *Reference: Engle, R. (2002). "Dynamic Conditional Correlation." Journal of Business & Economic Statistics.*
+                    📖 *References:*
+                    - *Engle, R. (2002). "Dynamic Conditional Correlation." Journal of Business & Economic Statistics, 20(3), 339-350.*
+                    - *Meucci, A. (2010). "Historical Scenarios with Fully Flexible Probabilities." GARP Risk Professional.*
                     """)
                 
                 st.markdown("---")
                 
                 # Asset selection for DCC
-                st.markdown("#### 🎯 Select Assets for Correlation Analysis")
+                st.markdown("#### 🎯 Select Assets for Analysis")
                 
                 available_assets = [(t, get_display_name(t)) for t in symbols]
                 
                 selected_dcc_assets = st.multiselect(
-                    "Choose 2-10 assets for DCC analysis",
+                    "Choose 2-10 assets",
                     options=[t[0] for t in available_assets],
                     default=[],
                     format_func=lambda x: get_display_name(x),
                     key="dcc_assets",
-                    help="Select at least 2 assets. More assets = longer computation time."
+                    help="The analysis works best with 3-10 assets. More assets = richer analysis but longer computation."
                 )
                 
                 if len(selected_dcc_assets) < 2:
-                    st.info("👆 Please select at least 2 assets to analyze correlation dynamics.")
+                    st.info("👆 Select at least 2 assets to analyze how their correlations evolve over time.")
                     
                 elif len(selected_dcc_assets) > 10:
-                    st.warning("⚠️ Too many assets selected. Please select 10 or fewer for stable DCC estimation.")
+                    st.warning("⚠️ Please select 10 or fewer assets for reliable estimation.")
                     
                 else:
                     # Configuration
-                    col1, col2 = st.columns(2)
+                    with st.expander("⚙️ Model Settings", expanded=False):
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            tau_hl = st.slider(
+                                "Half-life (days)",
+                                min_value=30, max_value=252, value=120, step=10,
+                                key="dcc_halflife",
+                                help="How quickly old data loses importance. 120 days = data from 4 months ago has half the weight of today."
+                            )
+                            st.caption(f"With τ={tau_hl}: data from {tau_hl} days ago has 50% weight, {tau_hl*2} days ago has 25% weight")
+                        
+                        with col2:
+                            nu_marginal = st.selectbox(
+                                "Distribution assumption",
+                                options=[("Normal (standard)", 1000), ("Student-t ν=6 (fat tails)", 6), ("Student-t ν=4 (fatter tails)", 4)],
+                                format_func=lambda x: x[0],
+                                index=0,
+                                key="dcc_nu",
+                                help="Student-t captures extreme events better but needs more data."
+                            )
+                            nu = nu_marginal[1]
                     
-                    with col1:
-                        tau_hl = st.slider(
-                            "Half-life for flexible probabilities (days)",
-                            min_value=30, max_value=252, value=120, step=10,
-                            key="dcc_halflife",
-                            help="Controls how much weight recent observations get. Lower = more reactive to recent data."
-                        )
-                    
-                    with col2:
-                        nu_marginal = st.selectbox(
-                            "Marginal distribution",
-                            options=[("Gaussian (ν=∞)", 1000), ("Student-t (ν=6)", 6), ("Student-t (ν=4)", 4)],
-                            format_func=lambda x: x[0],
-                            index=0,
-                            key="dcc_nu",
-                            help="Student-t captures fat tails better but requires more data."
-                        )
-                        nu = nu_marginal[1]
-                    
-                    if st.button("🚀 Run DCC Analysis", use_container_width=True, key="run_dcc"):
+                    if st.button("🚀 Run Analysis", use_container_width=True, key="run_dcc"):
                         
                         n_assets = len(selected_dcc_assets)
                         
-                        with st.spinner(f"Fitting GARCH(1,1) to {n_assets} assets and estimating DCC model..."):
+                        with st.spinner(f"Analyzing correlation dynamics for {n_assets} assets..."):
                             
                             try:
                                 # Prepare returns data
@@ -3125,7 +3131,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                                 for i in range(n_assets):
                                     u = t_dist.cdf(eps[:, i], df=nu, loc=mu_marg[i], scale=np.sqrt(sigma2_marg[i]))
                                     u = np.clip(u, 1e-7, 1 - 1e-7)
-                                    eps_tilde[:, i] = t_dist.ppf(u, df=1000)  # Back to standard normal
+                                    eps_tilde[:, i] = t_dist.ppf(u, df=1000)
                                 
                                 # Compute unconditional correlation
                                 _, sigma2_eps_tilde = fit_locdisp_mlfp(eps_tilde, p=p_flex, nu=1000)
@@ -3148,10 +3154,10 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                                     'q2_final': q2_final
                                 }
                                 
-                                st.success(f"✅ DCC model fitted successfully!")
+                                st.success("✅ Analysis complete!")
                                 
                             except Exception as e:
-                                st.error(f"❌ DCC estimation failed: {str(e)}")
+                                st.error(f"❌ Analysis failed: {str(e)}")
                                 st.session_state.dcc_results = None
                     
                     # Display results if available
@@ -3167,101 +3173,305 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         
                         st.markdown("---")
                         
-                        # ===== DCC PARAMETERS =====
-                        st.markdown("#### 📊 DCC Model Parameters")
+                        # ================================================================
+                        # KEY FINDING 1: CURRENT CORRELATION REGIME
+                        # ================================================================
+                        st.markdown("## 📊 Key Finding 1: What's Your Current Correlation Regime?")
                         
-                        col1, col2, col3, col4 = st.columns(4)
+                        # Compute average correlation (current vs long-run)
+                        avg_corr_current = np.mean(r2_t[-1][np.triu_indices(n_assets, k=1)])
+                        avg_corr_longrun = np.mean(rho2_uncond[np.triu_indices(n_assets, k=1)])
+                        corr_diff = avg_corr_current - avg_corr_longrun
+                        
+                        # Compute historical average correlation series for percentile
+                        avg_corr_series = np.zeros(len(dates))
+                        for t in range(len(dates)):
+                            upper_tri_t = r2_t[t][np.triu_indices(n_assets, k=1)]
+                            avg_corr_series[t] = np.mean(upper_tri_t)
+                        
+                        corr_percentile = stats.percentileofscore(avg_corr_series, avg_corr_current)
+                        
+                        # Display regime
+                        col1, col2, col3 = st.columns(3)
                         
                         with col1:
-                            st.metric("c (mean reversion)", f"{c:.4f}")
+                            st.metric(
+                                "Current Avg. Correlation",
+                                f"{avg_corr_current:.2f}",
+                                delta=f"{corr_diff:+.2f} vs long-run",
+                                delta_color="inverse"  # Red when positive (bad for diversification)
+                            )
+                        
                         with col2:
-                            st.metric("a (shock reaction)", f"{a:.4f}")
+                            st.metric(
+                                "Long-run Average",
+                                f"{avg_corr_longrun:.2f}"
+                            )
+                        
                         with col3:
-                            st.metric("b (persistence)", f"{b:.4f}")
-                        with col4:
-                            persistence = a + b
-                            st.metric("Persistence (a+b)", f"{persistence:.4f}")
+                            st.metric(
+                                "Current Percentile",
+                                f"{corr_percentile:.0f}%",
+                                help="Where current correlation stands vs history. 90% = correlations are higher than 90% of historical observations."
+                            )
                         
-                        # Interpretation
-                        st.markdown("##### 🎯 Parameter Interpretation")
+                        # INTERPRETATION BOX
+                        st.markdown("#### 🎯 What does this mean for your portfolio?")
                         
-                        if persistence > 0.98:
-                            st.warning(f"⚠️ **Very high persistence ({persistence:.3f})**: Correlation shocks are extremely long-lasting. Once correlations spike, they stay elevated for months.")
-                        elif persistence > 0.9:
-                            st.info(f"ℹ️ **High persistence ({persistence:.3f})**: Typical for equity markets. Correlation regimes last weeks to months.")
+                        if corr_diff > 0.10:
+                            st.error(f"""
+                            **⚠️ HIGH CORRELATION REGIME**
+                            
+                            Your portfolio's average correlation ({avg_corr_current:.2f}) is **significantly above** 
+                            the long-run average ({avg_corr_longrun:.2f}).
+                            
+                            **Practical implications:**
+                            - Your assets are currently moving together more than usual
+                            - **Diversification is less effective right now**
+                            - Portfolio volatility is likely **higher than your historical estimates suggest**
+                            - VaR/CVaR calculated with historical correlation may **underestimate current risk**
+                            
+                            **Possible actions:**
+                            1. Reduce overall portfolio size to maintain the same risk level
+                            2. Consider adding assets with lower correlation to your current holdings
+                            3. Review hedge ratios if you're hedging (they may need adjustment)
+                            """)
+                            
+                        elif corr_diff < -0.10:
+                            st.success(f"""
+                            **✅ LOW CORRELATION REGIME**
+                            
+                            Your portfolio's average correlation ({avg_corr_current:.2f}) is **significantly below** 
+                            the long-run average ({avg_corr_longrun:.2f}).
+                            
+                            **Practical implications:**
+                            - Your assets are moving more independently than usual
+                            - **Diversification is working well right now**
+                            - Portfolio volatility is likely **lower than historical estimates suggest**
+                            
+                            **Possible actions:**
+                            1. This is generally a favorable environment for diversified portfolios
+                            2. You may have room to take slightly more risk if desired
+                            3. Be aware this regime may not persist (see persistence analysis below)
+                            """)
+                            
                         else:
-                            st.success(f"✅ **Moderate persistence ({persistence:.3f})**: Correlations mean-revert relatively quickly.")
-                        
-                        if a > 0.1:
-                            st.markdown(f"• **High reactivity (a={a:.3f})**: Correlations respond strongly to joint shocks")
-                        else:
-                            st.markdown(f"• **Low reactivity (a={a:.3f})**: Correlations are relatively stable day-to-day")
+                            st.info(f"""
+                            **ℹ️ NORMAL CORRELATION REGIME**
+                            
+                            Your portfolio's average correlation ({avg_corr_current:.2f}) is **near** 
+                            the long-run average ({avg_corr_longrun:.2f}).
+                            
+                            **Practical implications:**
+                            - Correlations are behaving as expected historically
+                            - Your historical risk estimates should be reasonable
+                            - Standard portfolio assumptions are appropriate
+                            """)
                         
                         st.markdown("---")
                         
-                        # ===== UNCONDITIONAL CORRELATION HEATMAP =====
-                        st.markdown("#### 🗺️ Unconditional (Long-run) Correlation Matrix")
+                        # ================================================================
+                        # KEY FINDING 2: HOW PERSISTENT IS THIS REGIME?
+                        # ================================================================
+                        st.markdown("## ⏳ Key Finding 2: How Long Will This Regime Last?")
                         
-                        col1, col2 = st.columns([1.5, 1])
+                        persistence = a + b
+                        
+                        col1, col2, col3 = st.columns(3)
                         
                         with col1:
-                            # Heatmap
+                            st.metric("Persistence (a+b)", f"{persistence:.3f}")
+                        with col2:
+                            st.metric("Shock Reaction (a)", f"{a:.3f}")
+                        with col3:
+                            st.metric("Memory (b)", f"{b:.3f}")
+                        
+                        # Calculate half-life of correlation shocks
+                        if persistence < 1:
+                            shock_halflife = np.log(0.5) / np.log(persistence)
+                            shock_halflife_days = abs(shock_halflife)
+                        else:
+                            shock_halflife_days = float('inf')
+                        
+                        st.markdown("#### 🎯 What does this mean?")
+                        
+                        if persistence > 0.98:
+                            st.warning(f"""
+                            **Very High Persistence ({persistence:.3f})**
+                            
+                            Correlation shocks take a **very long time to fade** (half-life ≈ {shock_halflife_days:.0f} days).
+                            
+                            **Practical implication:** If correlations are currently elevated, **don't expect them to 
+                            quickly return to normal**. The current regime is likely to persist for weeks or months.
+                            
+                            *This is typical for equity markets during stress periods (Engle, 2002).*
+                            """)
+                        elif persistence > 0.90:
+                            st.info(f"""
+                            **High Persistence ({persistence:.3f})**
+                            
+                            Correlation shocks fade gradually (half-life ≈ {shock_halflife_days:.0f} days).
+                            
+                            **Practical implication:** Correlation regimes last weeks to months. If you observe 
+                            elevated correlations today, expect them to remain elevated for some time.
+                            
+                            *This is typical for most equity markets.*
+                            """)
+                        else:
+                            st.success(f"""
+                            **Moderate Persistence ({persistence:.3f})**
+                            
+                            Correlation shocks fade relatively quickly (half-life ≈ {shock_halflife_days:.0f} days).
+                            
+                            **Practical implication:** Correlations mean-revert faster than typical. Current 
+                            deviations from the long-run average are likely temporary.
+                            """)
+                        
+                        st.markdown("---")
+                        
+                        # ================================================================
+                        # KEY FINDING 3: CORRELATION OVER TIME
+                        # ================================================================
+                        st.markdown("## 📈 Key Finding 3: How Have Correlations Evolved?")
+                        
+                        st.markdown("""
+                        This chart shows the **average correlation across all asset pairs** over time.
+                        It's the single best summary of "how correlated is my portfolio right now?"
+                        """)
+                        
+                        # Average portfolio correlation over time
+                        fig_avg = go.Figure()
+                        
+                        fig_avg.add_trace(go.Scatter(
+                            x=dates, y=avg_corr_series,
+                            mode='lines',
+                            name='Portfolio Correlation',
+                            line=dict(color=CHART_COLORS[0], width=2),
+                            fill='tozeroy',
+                            fillcolor='rgba(78, 205, 196, 0.2)',
+                            hovertemplate='Date: %{x}<br>Avg Correlation: %{y:.3f}<extra></extra>'
+                        ))
+                        
+                        # Long-run average
+                        fig_avg.add_hline(
+                            y=avg_corr_longrun, line_dash="dash", line_color="#FFE66D",
+                            annotation_text=f"Long-run avg: {avg_corr_longrun:.2f}"
+                        )
+                        
+                        # High correlation threshold
+                        high_threshold = avg_corr_longrun + np.std(avg_corr_series)
+                        fig_avg.add_hline(
+                            y=high_threshold, line_dash="dot", line_color="#FF6B6B",
+                            annotation_text=f"High regime: >{high_threshold:.2f}"
+                        )
+                        
+                        fig_avg.update_layout(
+                            height=400,
+                            xaxis_title="Date",
+                            yaxis_title="Average Pairwise Correlation",
+                            yaxis_range=[0, 1.0],
+                            title="Portfolio-Level Correlation Over Time"
+                        )
+                        fig_avg = apply_plotly_theme(fig_avg)
+                        st.plotly_chart(fig_avg, use_container_width=True)
+                        
+                        # Identify high-correlation periods
+                        high_corr_periods = avg_corr_series > high_threshold
+                        pct_high_corr = np.mean(high_corr_periods) * 100
+                        
+                        st.markdown(f"""
+                        **Reading this chart:**
+                        - **Yellow dashed line**: Long-run average correlation
+                        - **Red dotted line**: Threshold for "high correlation regime" (mean + 1 std)
+                        - Historically, your portfolio has been in a high-correlation regime **{pct_high_corr:.1f}%** of the time
+                        """)
+                        
+                        st.markdown("---")
+                        
+                        # ================================================================
+                        # KEY FINDING 4: PAIR-BY-PAIR ANALYSIS
+                        # ================================================================
+                        st.markdown("## 🔍 Key Finding 4: Which Pairs Are Most Correlated?")
+                        
+                        col1, col2 = st.columns([1.3, 1])
+                        
+                        with col1:
+                            # Heatmap of CURRENT correlations
+                            st.markdown("##### Current Correlation Matrix")
+                            
                             asset_names = [get_display_name(a) for a in assets]
+                            current_corr_matrix = r2_t[-1]
                             
                             fig_heatmap = go.Figure(data=go.Heatmap(
-                                z=rho2_uncond,
+                                z=current_corr_matrix,
                                 x=asset_names,
                                 y=asset_names,
                                 colorscale='RdBu_r',
                                 zmid=0,
                                 zmin=-1, zmax=1,
-                                text=np.round(rho2_uncond, 2),
+                                text=np.round(current_corr_matrix, 2),
                                 texttemplate='%{text}',
                                 textfont=dict(size=10, color='white'),
-                                hovertemplate='%{x} vs %{y}<br>Correlation: %{z:.3f}<extra></extra>'
+                                hovertemplate='%{x} vs %{y}<br>Current ρ: %{z:.3f}<extra></extra>'
                             ))
                             
                             fig_heatmap.update_layout(
                                 height=400,
                                 xaxis=dict(tickangle=45),
-                                yaxis=dict(autorange='reversed')
+                                yaxis=dict(autorange='reversed'),
+                                title="Correlations RIGHT NOW"
                             )
                             fig_heatmap = apply_plotly_theme(fig_heatmap)
                             st.plotly_chart(fig_heatmap, use_container_width=True)
                         
                         with col2:
-                            st.markdown("##### 📈 Correlation Statistics")
+                            st.markdown("##### Pairs to Watch")
                             
-                            # Extract upper triangle (excluding diagonal)
-                            upper_tri = rho2_uncond[np.triu_indices(n_assets, k=1)]
+                            # Find highest and lowest correlation pairs
+                            pairs_data = []
+                            for i in range(n_assets):
+                                for j in range(i+1, n_assets):
+                                    current_rho = r2_t[-1, i, j]
+                                    longrun_rho = rho2_uncond[i, j]
+                                    diff = current_rho - longrun_rho
+                                    pairs_data.append({
+                                        'Pair': f"{get_display_name(assets[i])} / {get_display_name(assets[j])}",
+                                        'Current ρ': current_rho,
+                                        'Long-run ρ': longrun_rho,
+                                        'Difference': diff,
+                                        'i': i, 'j': j
+                                    })
                             
-                            corr_stats = {
-                                'Metric': ['Mean', 'Median', 'Min', 'Max', 'Std Dev'],
-                                'Value': [
-                                    f"{np.mean(upper_tri):.3f}",
-                                    f"{np.median(upper_tri):.3f}",
-                                    f"{np.min(upper_tri):.3f}",
-                                    f"{np.max(upper_tri):.3f}",
-                                    f"{np.std(upper_tri):.3f}"
-                                ]
-                            }
-                            st.markdown(create_styled_table(pd.DataFrame(corr_stats)), unsafe_allow_html=True)
+                            pairs_df = pd.DataFrame(pairs_data)
                             
-                            # Interpretation
-                            mean_corr = np.mean(upper_tri)
-                            if mean_corr > 0.6:
-                                st.warning("⚠️ **High average correlation**: Limited diversification benefit")
-                            elif mean_corr > 0.3:
-                                st.info("ℹ️ **Moderate correlation**: Some diversification benefit")
-                            else:
-                                st.success("✅ **Low correlation**: Good diversification potential")
+                            # Highest current correlations
+                            st.markdown("**🔴 Highest correlations (least diversification):**")
+                            top_corr = pairs_df.nlargest(3, 'Current ρ')
+                            for _, row in top_corr.iterrows():
+                                color = "🔴" if row['Current ρ'] > 0.7 else "🟡"
+                                st.markdown(f"{color} **{row['Pair']}**: {row['Current ρ']:.2f}")
+                            
+                            st.markdown("")
+                            
+                            # Biggest increases vs long-run
+                            st.markdown("**⬆️ Largest increases vs normal:**")
+                            top_increase = pairs_df.nlargest(3, 'Difference')
+                            for _, row in top_increase.iterrows():
+                                if row['Difference'] > 0.05:
+                                    st.markdown(f"⚠️ **{row['Pair']}**: +{row['Difference']:.2f} (now {row['Current ρ']:.2f} vs normal {row['Long-run ρ']:.2f})")
+                            
+                            if all(top_increase['Difference'] <= 0.05):
+                                st.markdown("No significant increases detected.")
                         
                         st.markdown("---")
                         
-                        # ===== DYNAMIC CORRELATION TIME SERIES =====
-                        st.markdown("#### 📈 Dynamic Correlations Over Time")
+                        # ================================================================
+                        # DETAILED PAIR ANALYSIS
+                        # ================================================================
+                        st.markdown("## 📉 Detailed: Single Pair Over Time")
                         
-                        # Let user select which pair to visualize
+                        st.markdown("Select a specific pair to see how their correlation has changed:")
+                        
                         if n_assets > 2:
                             col1, col2 = st.columns(2)
                             with col1:
@@ -3283,145 +3493,75 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             asset1_idx, asset2_idx = 0, 1
                         
                         # Extract pairwise correlations over time
-                        corr_series = r2_t[:, asset1_idx, asset2_idx]
-                        uncond_corr = rho2_uncond[asset1_idx, asset2_idx]
+                        corr_series_pair = r2_t[:, asset1_idx, asset2_idx]
+                        uncond_corr_pair = rho2_uncond[asset1_idx, asset2_idx]
+                        current_corr_pair = corr_series_pair[-1]
                         
-                        fig_corr = go.Figure()
+                        fig_pair = go.Figure()
                         
-                        # Dynamic correlation
-                        fig_corr.add_trace(go.Scatter(
-                            x=dates, y=corr_series,
+                        fig_pair.add_trace(go.Scatter(
+                            x=dates, y=corr_series_pair,
                             mode='lines',
                             name='Conditional Correlation',
-                            line=dict(color=CHART_COLORS[0], width=2),
+                            line=dict(color=CHART_COLORS[1], width=2),
                             hovertemplate='Date: %{x}<br>Correlation: %{y:.3f}<extra></extra>'
                         ))
                         
-                        # Unconditional (long-run) correlation
-                        fig_corr.add_hline(
-                            y=uncond_corr, line_dash="dash", line_color="#FFE66D",
-                            annotation_text=f"Unconditional: {uncond_corr:.3f}",
-                            annotation_position="right"
+                        fig_pair.add_hline(
+                            y=uncond_corr_pair, line_dash="dash", line_color="#FFE66D",
+                            annotation_text=f"Long-run: {uncond_corr_pair:.2f}"
                         )
                         
-                        # Add reference lines
-                        fig_corr.add_hline(y=0, line_color="rgba(255,255,255,0.3)")
-                        
-                        fig_corr.update_layout(
-                            height=400,
+                        fig_pair.update_layout(
+                            height=350,
                             xaxis_title="Date",
                             yaxis_title="Correlation",
                             yaxis_range=[-0.2, 1.0],
-                            title=f"Dynamic Correlation: {get_display_name(assets[asset1_idx])} vs {get_display_name(assets[asset2_idx])}"
+                            title=f"Correlation: {get_display_name(assets[asset1_idx])} vs {get_display_name(assets[asset2_idx])}"
                         )
-                        fig_corr = apply_plotly_theme(fig_corr)
-                        st.plotly_chart(fig_corr, use_container_width=True)
+                        fig_pair = apply_plotly_theme(fig_pair)
+                        st.plotly_chart(fig_pair, use_container_width=True)
                         
-                        # Statistics for this pair
-                        col1, col2, col3, col4 = st.columns(4)
+                        # Pair-specific interpretation
+                        pair_diff = current_corr_pair - uncond_corr_pair
+                        pair_percentile = stats.percentileofscore(corr_series_pair, current_corr_pair)
                         
-                        current_corr = corr_series[-1]
-                        corr_percentile = stats.percentileofscore(corr_series, current_corr)
-                        
+                        col1, col2, col3 = st.columns(3)
                         with col1:
-                            st.metric("Current", f"{current_corr:.3f}")
+                            st.metric("Current", f"{current_corr_pair:.3f}")
                         with col2:
-                            st.metric("Percentile", f"{corr_percentile:.0f}%")
+                            st.metric("vs Long-run", f"{pair_diff:+.3f}", delta_color="inverse")
                         with col3:
-                            st.metric("Min (historical)", f"{np.min(corr_series):.3f}")
-                        with col4:
-                            st.metric("Max (historical)", f"{np.max(corr_series):.3f}")
-                        
-                        # Interpretation
-                        if current_corr > uncond_corr + 0.1:
-                            st.warning(f"⚠️ Current correlation ({current_corr:.3f}) is **above** long-run average ({uncond_corr:.3f}). Diversification benefit is currently reduced.")
-                        elif current_corr < uncond_corr - 0.1:
-                            st.success(f"✅ Current correlation ({current_corr:.3f}) is **below** long-run average ({uncond_corr:.3f}). Good diversification environment.")
-                        else:
-                            st.info(f"ℹ️ Current correlation ({current_corr:.3f}) is near the long-run average ({uncond_corr:.3f}).")
+                            st.metric("Percentile", f"{pair_percentile:.0f}%")
                         
                         st.markdown("---")
                         
-                        # ===== AVERAGE PORTFOLIO CORRELATION =====
-                        st.markdown("#### 📊 Average Portfolio Correlation Over Time")
+                        # ================================================================
+                        # ELLIPSOID VISUALIZATION
+                        # ================================================================
+                        st.markdown("## 🔮 Visual: Correlation Ellipsoid")
                         
-                        # Compute average pairwise correlation at each time point
-                        avg_corr_series = np.zeros(len(dates))
-                        for t in range(len(dates)):
-                            upper_tri_t = r2_t[t][np.triu_indices(n_assets, k=1)]
-                            avg_corr_series[t] = np.mean(upper_tri_t)
-                        
-                        avg_uncond = np.mean(rho2_uncond[np.triu_indices(n_assets, k=1)])
-                        
-                        fig_avg = go.Figure()
-                        
-                        fig_avg.add_trace(go.Scatter(
-                            x=dates, y=avg_corr_series,
-                            mode='lines',
-                            name='Avg. Conditional Correlation',
-                            line=dict(color=CHART_COLORS[1], width=2),
-                            fill='tozeroy',
-                            fillcolor='rgba(78, 205, 196, 0.2)',
-                            hovertemplate='Date: %{x}<br>Avg Correlation: %{y:.3f}<extra></extra>'
-                        ))
-                        
-                        fig_avg.add_hline(
-                            y=avg_uncond, line_dash="dash", line_color="#FFE66D",
-                            annotation_text=f"Unconditional: {avg_uncond:.3f}"
-                        )
-                        
-                        fig_avg.update_layout(
-                            height=350,
-                            xaxis_title="Date",
-                            yaxis_title="Average Pairwise Correlation",
-                            yaxis_range=[0, 1.0]
-                        )
-                        fig_avg = apply_plotly_theme(fig_avg)
-                        st.plotly_chart(fig_avg, use_container_width=True)
-                        
-                        # Identify high-correlation regimes
-                        high_corr_threshold = avg_uncond + np.std(avg_corr_series)
-                        high_corr_periods = avg_corr_series > high_corr_threshold
-                        pct_high_corr = np.mean(high_corr_periods) * 100
-                        
-                        st.markdown(f"**High correlation regime** (>{high_corr_threshold:.2f}): {pct_high_corr:.1f}% of the time")
-                        
-                        if avg_corr_series[-1] > high_corr_threshold:
-                            st.warning("⚠️ **Currently in high-correlation regime**: Portfolio diversification is less effective")
-                        
-                        st.markdown("---")
-                        
-                        # ===== CORRELATION ELLIPSOIDS =====
-                        st.markdown("#### 🔮 Conditional vs Unconditional Correlation (Ellipsoid View)")
-                        
-                        with st.expander("💡 How to read this chart", expanded=False):
+                        with st.expander("💡 How to read this chart", expanded=True):
                             st.markdown("""
-                            **Ellipsoids** visualize the joint distribution of two assets:
+                            This chart shows the **joint distribution** of the two selected assets:
                             
-                            - **Blue ellipse**: Unconditional (long-run average) correlation
-                            - **Red ellipse**: Current conditional correlation
-                            - **Scatter points**: Historical quasi-invariants (GARCH residuals)
+                            - **Blue ellipse**: What the distribution looks like "on average" (long-run)
+                            - **Red ellipse**: What the distribution looks like "right now" (conditional)
+                            - **Gray dots**: Historical observations (GARCH-filtered)
                             
                             **Interpretation:**
-                            - If red ellipse is **more elongated** than blue → current correlation is higher
-                            - If red ellipse is **more circular** → current correlation is lower
-                            - The **angle** of the ellipse shows the direction of correlation
-                            
-                            This visualization helps understand how the current market regime differs from the long-run average.
+                            - If the **red ellipse is more elongated (stretched)** than the blue → current correlation is **HIGHER** than normal
+                            - If the **red ellipse is more circular** than the blue → current correlation is **LOWER** than normal
+                            - The **direction of the stretch** shows whether correlation is positive (tilted /) or negative (tilted \\)
                             """)
                         
-                        # Use same asset pair as above
+                        # Use same asset pair
                         eps_pair = dcc['eps_tilde'][:, [asset1_idx, asset2_idx]]
                         
-                        # Unconditional correlation for pair
                         rho_uncond_pair = rho2_uncond[np.ix_([asset1_idx, asset2_idx], [asset1_idx, asset2_idx])]
-                        
-                        # Current conditional correlation
                         rho_cond_pair = r2_t[-1][np.ix_([asset1_idx, asset2_idx], [asset1_idx, asset2_idx])]
                         
-                        # Create ellipse parameters
-                        def ellipse_params(sigma2, scale=2.0):
-                            """Compute ellipse parameters from 2x2 covariance matrix."""
+                        def create_ellipse_trace(sigma2, scale=2.0, color='blue', name='Ellipse'):
                             eigenvalues, eigenvectors = np.linalg.eig(sigma2)
                             order = eigenvalues.argsort()[::-1]
                             eigenvalues = eigenvalues[order]
@@ -3431,19 +3571,11 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             height = 2 * scale * np.sqrt(eigenvalues[1])
                             angle = np.degrees(np.arctan2(eigenvectors[1, 0], eigenvectors[0, 0]))
                             
-                            return width, height, angle
-                        
-                        def create_ellipse_trace(sigma2, scale=2.0, color='blue', name='Ellipse'):
-                            """Create plotly trace for ellipse."""
-                            w, h, ang = ellipse_params(sigma2, scale)
-                            
-                            # Generate ellipse points
                             theta = np.linspace(0, 2*np.pi, 100)
-                            ellipse_x = (w/2) * np.cos(theta)
-                            ellipse_y = (h/2) * np.sin(theta)
+                            ellipse_x = (width/2) * np.cos(theta)
+                            ellipse_y = (height/2) * np.sin(theta)
                             
-                            # Rotate
-                            ang_rad = np.radians(ang)
+                            ang_rad = np.radians(angle)
                             x_rot = ellipse_x * np.cos(ang_rad) - ellipse_y * np.sin(ang_rad)
                             y_rot = ellipse_x * np.sin(ang_rad) + ellipse_y * np.cos(ang_rad)
                             
@@ -3456,25 +3588,21 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         
                         fig_ellipse = go.Figure()
                         
-                        # Scatter plot of quasi-invariants
                         fig_ellipse.add_trace(go.Scatter(
                             x=eps_pair[:, 0], y=eps_pair[:, 1],
                             mode='markers',
-                            name='Quasi-invariants',
+                            name='Historical observations',
                             marker=dict(size=3, color='rgba(255,255,255,0.3)')
                         ))
                         
-                        # Unconditional ellipse (blue)
                         fig_ellipse.add_trace(create_ellipse_trace(
-                            rho_uncond_pair, scale=2.0, color='#6366F1', name='Unconditional'
+                            rho_uncond_pair, scale=2.0, color='#6366F1', name='Long-run (unconditional)'
                         ))
                         
-                        # Conditional ellipse (red)
                         fig_ellipse.add_trace(create_ellipse_trace(
-                            rho_cond_pair, scale=2.0, color='#FF6B6B', name='Conditional (current)'
+                            rho_cond_pair, scale=2.0, color='#FF6B6B', name='Current (conditional)'
                         ))
                         
-                        # Set equal aspect ratio
                         max_range = max(np.abs(eps_pair).max() * 1.2, 3)
                         
                         fig_ellipse.update_layout(
@@ -3488,100 +3616,63 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         fig_ellipse = apply_plotly_theme(fig_ellipse)
                         st.plotly_chart(fig_ellipse, use_container_width=True)
                         
-                        # Comparison
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.markdown(f"**Unconditional correlation**: {rho_uncond_pair[0,1]:.3f}")
-                        with col2:
-                            st.markdown(f"**Current conditional correlation**: {rho_cond_pair[0,1]:.3f}")
-                        
-                        corr_diff = rho_cond_pair[0,1] - rho_uncond_pair[0,1]
-                        if corr_diff > 0.05:
-                            st.warning(f"⚠️ Current correlation is **{corr_diff:.3f} higher** than long-run average")
-                        elif corr_diff < -0.05:
-                            st.success(f"✅ Current correlation is **{abs(corr_diff):.3f} lower** than long-run average")
-                        else:
-                            st.info("ℹ️ Current correlation is near the long-run average")
-                        
                         st.markdown("---")
                         
-                        # ===== PRACTICAL IMPLICATIONS =====
-                        st.markdown("#### 💼 Practical Implications for Your Portfolio")
+                        # ================================================================
+                        # FINAL SUMMARY & RECOMMENDATIONS
+                        # ================================================================
+                        st.markdown("## 💼 Summary: What Should You Do?")
                         
-                        current_avg_corr = avg_corr_series[-1]
+                        # Build recommendation based on findings
+                        recommendations = []
+                        warnings = []
                         
-                        implications = []
+                        # Check correlation regime
+                        if corr_diff > 0.10:
+                            warnings.append("Correlations are elevated vs historical average")
+                            recommendations.append("Consider reducing portfolio size or adding uncorrelated assets")
+                            
+                        if corr_diff > 0.15 and persistence > 0.95:
+                            warnings.append("High correlations are likely to persist")
+                            recommendations.append("Don't expect quick mean-reversion - adjust positions gradually")
                         
-                        # Correlation regime
-                        if current_avg_corr > avg_uncond + 0.1:
-                            implications.append("""
-                            **🔴 High Correlation Regime**
-                            - Diversification is currently less effective than usual
-                            - Consider reducing overall portfolio risk
-                            - Hedging strategies may be more valuable
-                            """)
-                        elif current_avg_corr < avg_uncond - 0.1:
-                            implications.append("""
-                            **🟢 Low Correlation Regime**
-                            - Good diversification environment
-                            - Portfolio risk is likely lower than expected from individual volatilities
-                            - May be opportunity to take slightly more risk
-                            """)
+                        # Check for specific high-correlation pairs
+                        high_corr_pairs = pairs_df[pairs_df['Current ρ'] > 0.8]
+                        if len(high_corr_pairs) > 0:
+                            pair_names = ", ".join(high_corr_pairs['Pair'].tolist()[:3])
+                            warnings.append(f"Very high correlation between: {pair_names}")
+                            recommendations.append("These pairs provide limited diversification - consider if you need both")
+                        
+                        # Check for correlation increases
+                        big_increases = pairs_df[pairs_df['Difference'] > 0.15]
+                        if len(big_increases) > 0:
+                            recommendations.append("Review hedge ratios for pairs with large correlation increases")
+                        
+                        # Display
+                        if warnings:
+                            st.warning("**⚠️ Attention:**\n" + "\n".join([f"- {w}" for w in warnings]))
+                        
+                        if recommendations:
+                            st.markdown("**📋 Recommended Actions:**")
+                            for i, rec in enumerate(recommendations, 1):
+                                st.markdown(f"{i}. {rec}")
                         else:
-                            implications.append("""
-                            **🟡 Normal Correlation Regime**
-                            - Correlations are near long-run averages
-                            - Standard portfolio assumptions are reasonable
-                            """)
-                        
-                        # Persistence warning
-                        if persistence > 0.95:
-                            implications.append("""
-                            **⏳ High Persistence Warning**
-                            - Current correlation regime is likely to persist
-                            - Don't expect rapid mean-reversion
-                            - Adjust portfolio gradually, not reactively
-                            """)
-                        
-                        # Specific asset warnings
-                        high_corr_pairs = []
-                        for i in range(n_assets):
-                            for j in range(i+1, n_assets):
-                                if r2_t[-1, i, j] > 0.8:
-                                    high_corr_pairs.append((assets[i], assets[j], r2_t[-1, i, j]))
-                        
-                        if high_corr_pairs:
-                            pair_str = ", ".join([f"{get_display_name(p[0])}-{get_display_name(p[1])} ({p[2]:.2f})" for p in high_corr_pairs[:3]])
-                            implications.append(f"""
-                            **🔗 Highly Correlated Pairs**
-                            - {pair_str}
-                            - These assets provide limited diversification benefit
-                            - Consider if you need both in the portfolio
-                            """)
-                        
-                        for imp in implications:
-                            st.markdown(imp)
-                        
-                        # Final recommendation
-                        st.markdown("---")
-                        st.markdown("##### 🎯 Summary Recommendation")
-                        
-                        if current_avg_corr > avg_uncond + 0.1 and persistence > 0.9:
-                            st.error("""
-                            **Caution advised**: Portfolio is in a high-correlation regime that is likely to persist. 
-                            Consider: (1) Reducing position sizes, (2) Adding uncorrelated assets, (3) Tail risk hedging.
-                            """)
-                        elif current_avg_corr < avg_uncond - 0.1:
                             st.success("""
-                            **Favorable conditions**: Correlations are below average, enhancing diversification. 
-                            Current portfolio allocation may provide better risk-adjusted returns than expected.
+                            **✅ No immediate concerns.**
+                            
+                            Correlations are behaving normally. Your portfolio's diversification 
+                            is working as expected based on historical patterns.
                             """)
-                        else:
-                            st.info("""
-                            **Normal conditions**: Correlations are near historical averages. 
-                            Standard portfolio assumptions are appropriate. Continue monitoring for regime changes.
-                            """)
-        
+                        
+                        # Risk caveat
+                        st.markdown("---")
+                        st.caption("""
+                        **Important:** This analysis estimates *current* correlations based on recent market behavior. 
+                        It does NOT predict future returns. Correlations can change rapidly during market stress.
+                        Use these insights alongside other risk management tools, not as the sole basis for decisions.
+                        
+                        📖 *Methodology: DCC-GARCH (Engle, 2002) with Flexible Probabilities (Meucci, 2010)*
+                        """)        
         
         # Part 7: Backtest Validation Tab
         # TAB 5: BACKTEST VALIDATION - COMPLETE REWRITE
