@@ -11,6 +11,7 @@ import json
 import warnings
 from scipy import stats
 from scipy.optimize import minimize
+from scipy.stats import t as t_dist
 import requests
 
 from portfolio_analyzer import AdvancedPortfolioAnalyzer
