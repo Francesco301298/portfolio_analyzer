@@ -47,11 +47,6 @@ def fit_garch(returns):
     except:
         return None, None, None
 
-
-# =========================================================
-# DCC ANALYSIS FUNCTIONS
-# =========================================================
-
 def fit_locdisp_mlfp(eps, p=None, nu=1000, threshold=1e-3, maxiter=1000):
     """
     Maximum Likelihood with Flexible Probabilities (MLFP) estimation.
