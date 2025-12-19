@@ -3314,7 +3314,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                                 title=f"Dynamic Correlation: {get_display_name(assets[asset1_idx])} vs {get_display_name(assets[asset2_idx])}"
                             )
                             fig_corr = apply_plotly_theme(fig_corr)
-                            st.plotly_chart(fig_corr, use_container_width=True)
+                            st.plotly_chart(fig_avg, use_container_width=True)
                             
                             # Statistics for this pair
                             col1, col2, col3, col4 = st.columns(4)
