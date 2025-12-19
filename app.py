@@ -3377,7 +3377,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             yaxis_range=[0, 1.0]
                         )
                         fig_avg = apply_plotly_theme(fig_avg)
-                        st.plotly_chart(fig_corr, use_container_width=True)
+                        st.plotly_chart(fig_avg, use_container_width=True)
                         
                         # Identify high-correlation regimes
                         high_corr_threshold = avg_uncond + np.std(avg_corr_series)
