@@ -22,6 +22,8 @@ from core.metrics import calculate_robust_metrics
 from core.optimization import optimize_portfolio_weights
 from core.optimization import run_walk_forward_analysis
 from core.optimization import get_hrp_dendrogram_data
+from core.optimization import cvar_optimization
+from core.optimization import compute_portfolio_cvar
 
 from core.statistics import compute_autocorrelation
 from core.statistics import invariance_test_ellipsoid
