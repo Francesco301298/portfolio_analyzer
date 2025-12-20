@@ -4435,7 +4435,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 "max_sharpe": "Maximum Sharpe",
                 "risk_parity": "Risk Parity",
                 "max_return": "Maximum Return",
-                "hrp": "Hierarchical Risk Parity"
+                "hrp": "Hierarchical Risk Parity",
                 "custom": "Your Portfolio"
             }
 
