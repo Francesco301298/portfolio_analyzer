@@ -4418,11 +4418,16 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 "is excluded from training. Higher values make validation more conservative."
             )
 
+            # Build available methods list
+            available_cpcv_methods = ["equal", "min_vol", "max_sharpe", "risk_parity"]
+            if 'custom' in analyzer.portfolios:
+                available_cpcv_methods.append("custom")
+
             methods_to_test = st.multiselect(
                 "Strategies",
-                ["equal", "min_vol", "max_sharpe", "risk_parity"],
+                available_cpcv_methods,
                 default=["equal", "min_vol", "max_sharpe", "risk_parity"]
-            )
+            )            
 
             method_names = {
                 "equal": "Equally Weighted",
@@ -4431,6 +4436,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 "risk_parity": "Risk Parity",
                 "max_return": "Maximum Return",
                 "hrp": "Hierarchical Risk Parity"
+                "custom": "Your Portfolio"
             }
 
             # Primary metric for PBO calculation
