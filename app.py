@@ -1155,7 +1155,6 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 - **Balanced approach**: Sortino and Calmar (penalize only downside)
                 """)
             
-            st.markdown("---")
 
             # ============================================================
             # SECTION 2: MORE ON HIERARCHICAL RISK PARITY
@@ -1452,7 +1451,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     The HRP optimization still works, but the visual breakdown is unavailable.
                     """)            
 
-            # SECTION 4.5: CVaR OPTIMIZATION DEEP-DIVE
+            # SECTION 3: CVaR OPTIMIZATION DEEP-DIVE
             # ============================================================
             if 'cvar' in analyzer.portfolios:
                 with st.expander("📉 Understanding CVaR Optimization (Rockafellar & Uryasev, 2000)", expanded=False):
@@ -1472,7 +1471,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     **Value-at-Risk (VaR)**:
                     - Only tells you the threshold: *"5% chance of losing more than X%"*
                     - **Ignores how much you lose beyond that threshold**
-                    - Not sub-additive → diversification can increase VaR (!)
+                    - Not sub-additive → diversification can actually increase VaR
                     
                     ### CVaR: The Solution
                     
@@ -1495,22 +1494,12 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     2. **Sub-additivity**: Risk(A + B) ≤ Risk(A) + Risk(B) (diversification never hurts)
                     3. **Positive homogeneity**: Doubling position size doubles risk
                     4. **Translation invariance**: Adding cash reduces risk proportionally
-                    
-                    | Measure | Coherent? | Why / Why not |
-                    |---------|-----------|---------------|
-                    | Variance | ❌ | Penalizes upside; not monotonic |
-                    | VaR | ❌ | **Violates sub-additivity** (diversification can increase VaR) |
-                    | CVaR | ✅ | Satisfies all four axioms |
-                    
+                                        
                     ---
                     
                     ### The Rockafellar & Uryasev (2000) Breakthrough
-                    
-                    Before this paper, CVaR was hard to optimize because it involves:
-                    - The conditional expectation (need to identify tail scenarios)
-                    - Non-smooth indicator functions (is loss > VaR?)
-                    
-                    **Their insight:** CVaR can be computed by minimizing a **smooth convex function**:
+                                        
+                    The paper finds that CVaR can be computed by minimizing a **smooth convex function**:
                     
                     $$F_{\\alpha}(x, \\zeta) = \\zeta + \\frac{1}{1-\\alpha} \\mathbb{E}[[L(x,y) - \\zeta]^+]$$
                     
@@ -1635,21 +1624,13 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     st.markdown("""
                     1. **Rockafellar, R.T. & Uryasev, S. (2000).** "Optimization of Conditional Value-at-Risk." 
                        *Journal of Risk*, 2(3), 21-41.
-                       - **The foundational paper** that made CVaR optimization practical
                     
                     2. **Artzner, P., Delbaen, F., Eber, J.M., & Heath, D. (1999).** "Coherent Measures of Risk." 
                        *Mathematical Finance*, 9(3), 203-228.
-                       - Defines the axioms for coherent risk measures
                     
                     3. **Basel Committee on Banking Supervision (2016).** "Minimum Capital Requirements for Market Risk."
-                       - Why regulators prefer CVaR (Expected Shortfall) over VaR
                     """)
-                    
-                    st.info("""
-                    📖 **Want to go deeper?** The original Rockafellar & Uryasev paper is highly readable 
-                    and includes many practical examples. Available at: 
-                    http://www.ise.ufl.edu/uryasev/publications/
-                    """)            
+                              
             
             st.markdown("---")            
             
