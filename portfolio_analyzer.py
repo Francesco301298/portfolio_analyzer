@@ -579,6 +579,60 @@ class AdvancedPortfolioAnalyzer:
         cluster_var = np.dot(ivp_weights, np.dot(cov_cluster.values, ivp_weights))
         
         return cluster_var
+
+    def cvar_portfolio(self, alpha=0.95):
+        """
+        Create CVaR-optimized portfolio.
+        
+        Implementation based on Rockafellar & Uryasev (2000):
+        "Optimization of Conditional Value-at-Risk"
+        
+        CVaR (Conditional Value-at-Risk) minimizes the expected loss in the
+        worst (1-α)% of scenarios. This is a coherent risk measure (unlike VaR)
+        that better captures tail risk.
+        
+        The optimization uses Linear Programming to solve:
+            min CVaR_α(x) = min_ζ { ζ + (1/(1-α)) * E[[L(x) - ζ]^+] }
+        
+        Parameters:
+        -----------
+        alpha : float, default=0.95
+            Confidence level (0.95 = focus on worst 5% of scenarios)
+            
+        Returns:
+        --------
+        dict : Portfolio performance metrics with additional CVaR-specific info
+        
+        Notes:
+        ------
+        CVaR portfolios tend to be more diversified than mean-variance portfolios
+        because they directly penalize tail losses rather than total variance.
+        
+        References:
+        -----------
+        - Rockafellar, R.T. & Uryasev, S. (2000). "Optimization of Conditional 
+        Value-at-Risk." Journal of Risk, 2(3), 21-41.
+        """
+        returns_aligned = self.returns.reindex(columns=self.symbols)
+        
+        result = cvar_optimization(returns_aligned, alpha=alpha)
+        
+        if not result['success']:
+            print(f"Warning: CVaR optimization failed. Using equal weights.")
+        
+        optimal_weights = result['weights']
+        
+        # Calculate portfolio performance using existing method
+        portfolio_name = f"CVaR Optimized (α={alpha:.0%})"
+        self.portfolios['cvar'] = self._calculate_portfolio_performance(
+            optimal_weights, portfolio_name)
+        
+        # Add CVaR-specific metrics
+        self.portfolios['cvar']['cvar_alpha'] = alpha
+        self.portfolios['cvar']['cvar_value'] = result['cvar']
+        self.portfolios['cvar']['var_value'] = result['var']
+        
+        return self.portfolios['cvar']    
     
     def build_all_portfolios(self):
         """Build all portfolio types (7 strategies, no Black-Litterman)."""
@@ -593,6 +647,8 @@ class AdvancedPortfolioAnalyzer:
             ('risk_parity', self.risk_parity_portfolio),
             ('markowitz', self.markowitz_portfolio),
             ('hrp', self.hierarchical_risk_parity_portfolio),
+            ('cvar',self.cvar_portfolio),
+            
         ]
         
         for name, builder in portfolio_builders:
@@ -601,6 +657,8 @@ class AdvancedPortfolioAnalyzer:
             except Exception as e:
                 print(f"Warning: Could not build {name} portfolio: {e}")
 
+    
+    
     def compare_portfolios(self):
         """Create comparison table of all portfolios."""
         if not self.portfolios:
@@ -716,57 +774,3 @@ class AdvancedPortfolioAnalyzer:
         return filename
 
 
-
-def cvar_portfolio(self, alpha=0.95):
-    """
-    Create CVaR-optimized portfolio.
-    
-    Implementation based on Rockafellar & Uryasev (2000):
-    "Optimization of Conditional Value-at-Risk"
-    
-    CVaR (Conditional Value-at-Risk) minimizes the expected loss in the
-    worst (1-α)% of scenarios. This is a coherent risk measure (unlike VaR)
-    that better captures tail risk.
-    
-    The optimization uses Linear Programming to solve:
-        min CVaR_α(x) = min_ζ { ζ + (1/(1-α)) * E[[L(x) - ζ]^+] }
-    
-    Parameters:
-    -----------
-    alpha : float, default=0.95
-        Confidence level (0.95 = focus on worst 5% of scenarios)
-        
-    Returns:
-    --------
-    dict : Portfolio performance metrics with additional CVaR-specific info
-    
-    Notes:
-    ------
-    CVaR portfolios tend to be more diversified than mean-variance portfolios
-    because they directly penalize tail losses rather than total variance.
-    
-    References:
-    -----------
-    - Rockafellar, R.T. & Uryasev, S. (2000). "Optimization of Conditional 
-      Value-at-Risk." Journal of Risk, 2(3), 21-41.
-    """
-    returns_aligned = self.returns.reindex(columns=self.symbols)
-    
-    result = cvar_optimization(returns_aligned, alpha=alpha)
-    
-    if not result['success']:
-        print(f"Warning: CVaR optimization failed. Using equal weights.")
-    
-    optimal_weights = result['weights']
-    
-    # Calculate portfolio performance using existing method
-    portfolio_name = f"CVaR Optimized (α={alpha:.0%})"
-    self.portfolios['cvar'] = self._calculate_portfolio_performance(
-        optimal_weights, portfolio_name)
-    
-    # Add CVaR-specific metrics
-    self.portfolios['cvar']['cvar_alpha'] = alpha
-    self.portfolios['cvar']['cvar_value'] = result['cvar']
-    self.portfolios['cvar']['var_value'] = result['var']
-    
-    return self.portfolios['cvar']
