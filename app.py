@@ -4615,14 +4615,14 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             )
 
             # Build available methods list
-            available_cpcv_methods = ["Equally Weighted", "Minimum Volatility", "Maximum Sharpe", "Risk Parity"]
+            available_cpcv_methods = ["Equally Weighted", "Minimum Volatility", "Maximum Sharpe", "Risk Parity","CVaR (95%)"]
             if 'custom' in analyzer.portfolios:
                 available_cpcv_methods.append("Your Portfolio")
 
             methods_to_test = st.multiselect(
                 "Strategies",
                 available_cpcv_methods,
-                default=["Equally Weighted", "Minimum Volatility", "Maximum Sharpe", "Risk Parity"]
+                default=["Equally Weighted", "Minimum Volatility", "Maximum Sharpe", "Risk Parity","CVaR (95%)"]
             )            
 
             method_names = {
@@ -4632,6 +4632,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 "risk_parity": "Risk Parity",
                 "max_return": "Maximum Return",
                 "hrp": "Hierarchical Risk Parity",
+                "cvar": "CVaR (95%)",
                 "custom": "Your Portfolio"
             }
 
