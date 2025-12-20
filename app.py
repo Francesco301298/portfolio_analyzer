@@ -1155,6 +1155,303 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 """)
             
             st.markdown("---")
+
+            # ============================================================
+            # SECTION 5: MORE ON HIERARCHICAL RISK PARITY
+            # ============================================================
+            with st.expander("🌳 More on Hierarchical Risk Parity (HRP)"):
+                st.markdown("""
+                ## Understanding Hierarchical Risk Parity
+                
+                Hierarchical Risk Parity (HRP) is a portfolio optimization technique developed by 
+                **Marcos López de Prado** in 2016. Unlike traditional methods like Markowitz optimization, 
+                HRP doesn't try to find the "optimal" portfolio by solving a mathematical equation. 
+                Instead, it uses **machine learning** (hierarchical clustering) to build a diversified 
+                portfolio that respects the natural structure of asset relationships.
+                
+                ### Why HRP?
+                
+                Traditional portfolio optimization has well-known problems:
+                
+                - **Instability**: Small changes in inputs lead to dramatically different portfolios
+                - **Concentration**: Often puts all eggs in few baskets
+                - **Overfitting**: Optimizes perfectly on past data, disappoints in real trading
+                
+                HRP addresses these issues by taking a completely different approach: instead of 
+                optimizing, it **organizes** assets into a hierarchy and allocates risk accordingly.
+                
+                ---
+                
+                ### How HRP Works: The Three Steps
+                
+                **Step 1: Tree Clustering**
+                
+                First, we measure how "similar" each pair of assets is based on their correlation. 
+                Assets that move together (high correlation) are considered similar. We then build 
+                a tree (dendrogram) where similar assets are grouped together.
+                
+                The distance between assets is calculated as:
+                
+                $$d_{i,j} = \\sqrt{\\frac{1}{2}(1 - \\rho_{i,j})}$$
+                
+                where $\\rho_{i,j}$ is the correlation between assets $i$ and $j$.
+                
+                **Step 2: Quasi-Diagonalization**
+                
+                We reorganize the assets in the correlation matrix so that the largest correlations lie around the diagonal. 
+                This way, assets will end up close to those similar to them 
+                and far apart from very different ones and we will be able to visualize the clusters in a correlation matrix
+                
+                **Step 3: Recursive Bisection**
+                
+                Finally, we allocate weights by repeatedly splitting the portfolio in half and giving 
+                more weight to the lower variance half. This continues until each asset 
+                has its final weight.
+                
+                The allocation formula at each split is:
+                
+                $$\\alpha = \\frac{V_{right}}{V_{left} + V_{right}}$$
+                
+                where $V$ is the variance of each cluster. The cluster with **lower variance gets more weight**.
+                """)
+                
+                st.markdown("---")
+                st.markdown("### 📊 Dendrogram: Your Portfolio's Tree")
+                st.markdown("""
+                The dendrogram below shows how assets in your portfolio are related. Assets that are 
+                connected at lower heights are more similar (higher correlation). The structure reveals 
+                natural "clusters" of assets that tend to move together.
+                """)
+                
+                try:
+                    from scipy.cluster.hierarchy import dendrogram
+                    
+                    link, symbols, corr_matrix, distance_matrix = get_hrp_dendrogram_data(analyzer)
+                    
+                    # Create dendrogram figure
+                    fig_dendro = go.Figure()
+                    
+                    # Calculate dendrogram using scipy (for coordinates)
+                    dendro_data = dendrogram(link, labels=symbols, no_plot=True)
+                    
+                    # Extract coordinates
+                    icoord = np.array(dendro_data['icoord'])
+                    dcoord = np.array(dendro_data['dcoord'])
+                    
+                    # Plot dendrogram lines
+                    for i in range(len(icoord)):
+                        # Horizontal lines
+                        fig_dendro.add_trace(go.Scatter(
+                            x=icoord[i],
+                            y=dcoord[i],
+                            mode='lines',
+                            line=dict(color='#6366F1', width=2),
+                            hoverinfo='skip',
+                            showlegend=False
+                        ))
+                    
+                    # Add asset labels
+                    leaf_labels = dendro_data['ivl']
+                    leaf_positions = [5 + 10*i for i in range(len(leaf_labels))]
+                    
+                    # Get display names for labels
+                    display_labels = [get_display_name(label) if len(get_display_name(label)) <= 12 
+                                     else get_display_name(label)[:10] + '..' for label in leaf_labels]
+                    
+                    fig_dendro.add_trace(go.Scatter(
+                        x=leaf_positions,
+                        y=[-0.02] * len(leaf_labels),
+                        mode='text',
+                        text=display_labels,
+                        textposition='bottom center',
+                        textfont=dict(size=9, color='#E2E8F0'),
+                        hovertext=[f"{get_display_name(label)} ({label})" for label in leaf_labels],
+                        hoverinfo='text',
+                        showlegend=False
+                    ))
+                    
+                    fig_dendro.update_layout(
+                        height=400,
+                        xaxis=dict(
+                            showticklabels=False,
+                            showgrid=False,
+                            zeroline=False,
+                            title=""
+                        ),
+                        yaxis=dict(
+                            title="Distance (lower = more similar)",
+                            showgrid=True,
+                            gridcolor='rgba(99,102,241,0.15)',
+                            zeroline=False
+                        ),
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        margin=dict(t=20, b=80, l=60, r=20)
+                    )
+                    
+                    st.plotly_chart(fig_dendro, use_container_width=True)
+                    
+                    st.markdown("""
+                    **How to read the dendrogram:**
+                    - Assets at the **bottom** are individual holdings
+                    - **Vertical lines** show when assets/clusters merge
+                    - **Height of merge** indicates dissimilarity (lower = more correlated)
+                    - Assets connected at **low heights** tend to move together
+                    """)
+                    
+                    st.markdown("---")
+                    st.markdown("### 🔍 Cluster Analysis")
+                    
+                    # Identify main clusters (cut tree at appropriate height)
+                    from scipy.cluster.hierarchy import fcluster
+                    
+                    # Determine optimal number of clusters (between 2 and min(5, n_assets))
+                    max_clusters = min(5, len(symbols))
+                    n_clusters = min(3, max_clusters)  # Default to 3 clusters
+                    
+                    cluster_labels = fcluster(link, n_clusters, criterion='maxclust')
+                    
+                    # Group assets by cluster
+                    clusters = {}
+                    for i, (symbol, cluster_id) in enumerate(zip(symbols, cluster_labels)):
+                        if cluster_id not in clusters:
+                            clusters[cluster_id] = []
+                        clusters[cluster_id].append(symbol)
+                    
+                    # Display clusters
+                    st.markdown(f"Based on correlation structure, your {len(symbols)} assets form **{len(clusters)} main groups**:")
+                    
+                    cluster_cols = st.columns(min(len(clusters), 3))
+                    
+                    cluster_colors = ['#FF6B6B', '#4ECDC4', '#FFE66D', '#95E1D3', '#AA96DA']
+                    
+                    for idx, (cluster_id, assets) in enumerate(sorted(clusters.items())):
+                        with cluster_cols[idx % len(cluster_cols)]:
+                            color = cluster_colors[idx % len(cluster_colors)]
+                            
+                            # Calculate average correlation within cluster
+                            if len(assets) > 1:
+                                cluster_corrs = []
+                                for i, a1 in enumerate(assets):
+                                    for a2 in assets[i+1:]:
+                                        cluster_corrs.append(corr_matrix.loc[a1, a2])
+                                avg_corr = np.mean(cluster_corrs)
+                            else:
+                                avg_corr = 1.0
+                            
+                            st.markdown(f"""
+                            <div style='background: linear-gradient(135deg, {color}22, {color}11); 
+                                        border-left: 3px solid {color}; padding: 12px; border-radius: 8px; margin-bottom: 10px;'>
+                                <strong style='color: {color};'>Group {idx + 1}</strong><br>
+                                <span style='color: #94a3b8; font-size: 0.85rem;'>
+                                    {len(assets)} assets · Avg correlation: {avg_corr:.2f}
+                                </span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            for asset in assets:
+                                st.markdown(f"<span style='color: #E2E8F0; font-size: 0.9rem;'>• {get_display_name(asset)}</span>", 
+                                           unsafe_allow_html=True)
+                    
+                    st.markdown("---")
+                    st.markdown("### ⚖️ HRP Weight Allocation Logic")
+                    
+                    # Show HRP weights if available
+                    if 'hrp' in analyzer.portfolios:
+                        hrp_weights = analyzer.portfolios['hrp']['weights']
+                        
+                        # Create weight breakdown by cluster
+                        cluster_weights = {}
+                        for cluster_id, assets in clusters.items():
+                            cluster_weight = sum(hrp_weights[symbols.index(a)] for a in assets)
+                            cluster_weights[cluster_id] = cluster_weight
+                        
+                        st.markdown("""
+                        HRP allocates weights based on the principle: **lower risk clusters get more weight**. 
+                        Here's how the weight is distributed across the identified groups:
+                        """)
+                        
+                        # Cluster weight visualization
+                        fig_cluster_weights = go.Figure()
+                        
+                        cluster_names = [f"Group {i+1}" for i in range(len(clusters))]
+                        weights_pct = [cluster_weights[i+1] * 100 for i in range(len(clusters))]
+                        
+                        fig_cluster_weights.add_trace(go.Bar(
+                            x=cluster_names,
+                            y=weights_pct,
+                            marker_color=cluster_colors[:len(clusters)],
+                            text=[f"{w:.1f}%" for w in weights_pct],
+                            textposition='outside',
+                            textfont=dict(color='#E2E8F0', size=11)
+                        ))
+                        
+                        fig_cluster_weights.update_layout(
+                            height=300,
+                            yaxis_title="Weight Allocation (%)",
+                            xaxis_title="",
+                            showlegend=False
+                        )
+                        fig_cluster_weights = apply_plotly_theme(fig_cluster_weights)
+                        st.plotly_chart(fig_cluster_weights, use_container_width=True)
+                        
+                        # Individual asset weights within HRP
+                        st.markdown("**Individual Asset Weights (HRP):**")
+                        
+                        hrp_weight_data = []
+                        for i, symbol in enumerate(symbols):
+                            cluster_id = cluster_labels[i]
+                            hrp_weight_data.append({
+                                'Asset': get_display_name(symbol),
+                                'Ticker': symbol,
+                                'Group': f"Group {cluster_id}",
+                                'Weight': f"{hrp_weights[i]*100:.2f}%"
+                            })
+                        
+                        hrp_weight_df = pd.DataFrame(hrp_weight_data)
+                        hrp_weight_df = hrp_weight_df.sort_values('Weight', ascending=False)
+                        
+                        st.markdown(create_styled_table(hrp_weight_df, "HRP Portfolio Weights"), unsafe_allow_html=True)
+                    
+                    st.markdown("---")
+                    st.markdown("### 📚 Key Takeaways")
+                    
+                    st.markdown("""
+                    <div class='dashboard-card'>
+                    <p><strong>Why HRP often works well in practice:</strong></p>
+                    <ul>
+                        <li><strong>No forecasting required</strong>: Unlike Markowitz, HRP doesn't need expected returns (notoriously hard to predict)</li>
+                        <li><strong>Stable allocations</strong>: Small changes in correlations don't cause dramatic portfolio shifts</li>
+                        <li><strong>Natural diversification</strong>: The hierarchical structure prevents over-concentration</li>
+                        <li><strong>Respects market structure</strong>: Assets that behave similarly are treated as a group</li>
+                    </ul>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown("""
+                    <div class='dashboard-card'>
+                    <p><strong>Limitations to keep in mind:</strong></p>
+                    <ul>
+                        <li>HRP doesn't optimize for any specific goal (max return, min risk)</li>
+                        <li>It assumes historical correlations persist into the future</li>
+                        <li>The clustering is sensitive to the time period used</li>
+                    </ul>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.info("""
+                    📖 **Reference**: López de Prado, M. (2016). "Building Diversified Portfolios that 
+                    Outperform Out-of-Sample". *Journal of Portfolio Management*, 42(4), 59-69.
+                    """)
+                    
+                except Exception as e:
+                    st.warning(f"⚠️ Could not generate HRP visualization: {str(e)}")
+                    st.markdown("""
+                    The dendrogram visualization requires the scipy library. 
+                    The HRP optimization still works, but the visual breakdown is unavailable.
+                    """)            
+
+            st.markdown("---")            
             
             col1, col2 = st.columns(2)
             
