@@ -533,7 +533,117 @@ with st.sidebar:
                 selected_symbols.append(sym)
     
     selected_symbols = list(dict.fromkeys(selected_symbols))
+    # ============ CUSTOM WEIGHTS SECTION ============
+    st.markdown("---")
+    st.markdown("#### ⚖️ Custom Portfolio")
     
+    enable_custom_weights = st.checkbox(
+        "Define your own weights",
+        value=False,
+        key="enable_custom_weights",
+        help="Create a custom portfolio with your chosen allocation"
+    )
+    
+    custom_weights_valid = False
+    custom_weights_dict = {}
+    
+    if enable_custom_weights and selected_symbols:
+        st.caption("Assign weights to each asset (must sum to 100%)")
+        
+        # Initialize weights in session state if needed
+        if 'custom_weights' not in st.session_state:
+            st.session_state.custom_weights = {}
+        
+        # Clean up weights for removed assets
+        st.session_state.custom_weights = {
+            k: v for k, v in st.session_state.custom_weights.items() 
+            if k in selected_symbols
+        }
+        
+        # Default: equal weight for new assets
+        default_weight = 100.0 / len(selected_symbols)
+        
+        # Weight input method selection
+        weight_method = st.radio(
+            "Input method",
+            ["Sliders", "Manual entry"],
+            horizontal=True,
+            key="weight_input_method"
+        )
+        
+        total_weight = 0.0
+        temp_weights = {}
+        
+        if weight_method == "Sliders":
+            for ticker in selected_symbols:
+                current_val = st.session_state.custom_weights.get(ticker, default_weight)
+                weight = st.slider(
+                    f"{get_display_name(ticker)}",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(current_val),
+                    step=0.5,
+                    key=f"weight_slider_{ticker}",
+                    format="%.1f%%"
+                )
+                temp_weights[ticker] = weight
+                total_weight += weight
+        else:  # Manual entry
+            cols = st.columns(2)
+            for idx, ticker in enumerate(selected_symbols):
+                current_val = st.session_state.custom_weights.get(ticker, default_weight)
+                with cols[idx % 2]:
+                    weight = st.number_input(
+                        f"{get_display_name(ticker)}",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=float(current_val),
+                        step=0.5,
+                        key=f"weight_input_{ticker}",
+                        format="%.1f"
+                    )
+                    temp_weights[ticker] = weight
+                    total_weight += weight
+        
+        # Update session state
+        st.session_state.custom_weights = temp_weights
+        
+        # Validation and display
+        st.markdown("---")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if abs(total_weight - 100.0) < 0.01:
+                st.success(f"✅ Total: {total_weight:.1f}%")
+                custom_weights_valid = True
+                custom_weights_dict = temp_weights.copy()
+            elif total_weight > 100.0:
+                st.error(f"❌ Total: {total_weight:.1f}% (exceeds 100%)")
+            else:
+                st.warning(f"⚠️ Total: {total_weight:.1f}% (below 100%)")
+        
+        with col2:
+            # Quick actions
+            if st.button("Reset to Equal", key="reset_weights", use_container_width=True):
+                eq_weight = 100.0 / len(selected_symbols)
+                st.session_state.custom_weights = {t: eq_weight for t in selected_symbols}
+                st.rerun()
+        
+        # Show allocation preview
+        if custom_weights_valid:
+            with st.expander("Preview allocation", expanded=False):
+                for ticker, weight in sorted(temp_weights.items(), key=lambda x: -x[1]):
+                    if weight > 0:
+                        bar_width = int(weight / 2)  # Scale for display
+                        bar = "█" * bar_width
+                        st.markdown(f"**{get_display_name(ticker)}**: {weight:.1f}% {bar}")
+    
+    elif enable_custom_weights and not selected_symbols:
+        st.info("👆 Select assets first to define weights")
+    
+    # Store validation result for later use
+    st.session_state.custom_weights_valid = custom_weights_valid
+    st.session_state.custom_weights_dict = custom_weights_dict    
     st.markdown("---")
     st.markdown("#### 📅 Parameters")
     
