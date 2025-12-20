@@ -1158,7 +1158,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             st.markdown("---")
 
             # ============================================================
-            # SECTION 5: MORE ON HIERARCHICAL RISK PARITY
+            # SECTION 2: MORE ON HIERARCHICAL RISK PARITY
             # ============================================================
             with st.expander("🌳 More on Hierarchical Risk Parity (HRP)"):
                 st.markdown("""
@@ -1452,6 +1452,205 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     The HRP optimization still works, but the visual breakdown is unavailable.
                     """)            
 
+            # SECTION 4.5: CVaR OPTIMIZATION DEEP-DIVE
+            # ============================================================
+            if 'cvar' in analyzer.portfolios:
+                with st.expander("📉 Understanding CVaR Optimization (Rockafellar & Uryasev, 2000)", expanded=False):
+                    st.markdown("""
+                    ## What is CVaR and Why Does It Matter?
+                    
+                    **CVaR (Conditional Value-at-Risk)** is a risk measure that focuses on **tail risk** —
+                    the average loss in the worst-case scenarios.
+                    
+                    ### The Problem with Variance and VaR
+                    
+                    **Traditional Mean-Variance (Markowitz)**:
+                    - Penalizes **all volatility** equally (upside and downside)
+                    - Assumes normal distributions (fails in crashes)
+                    - Sharpe ratio doesn't capture tail risk
+                    
+                    **Value-at-Risk (VaR)**:
+                    - Only tells you the threshold: *"5% chance of losing more than X%"*
+                    - **Ignores how much you lose beyond that threshold**
+                    - Not sub-additive → diversification can increase VaR (!)
+                    
+                    ### CVaR: The Solution
+                    
+                    CVaR answers: *"If I'm in the worst 5% of scenarios, what's my **average** loss?"*
+                    
+                    **Mathematical definition:**
+                    
+                    $$\\text{CVaR}_{\\alpha}(X) = \\mathbb{E}[X | X \\geq \\text{VaR}_{\\alpha}(X)]$$
+                    
+                    - **α = 0.95** → CVaR is the average of the worst 5% of returns
+                    - **α = 0.99** → CVaR is the average of the worst 1% (more extreme tail)
+                    
+                    ---
+                    
+                    ### Why CVaR is a **Coherent Risk Measure**
+                    
+                    Artzner et al. (1999) defined four axioms that any "reasonable" risk measure should satisfy:
+                    
+                    1. **Monotonicity**: If portfolio A always loses less than B, then Risk(A) ≤ Risk(B)
+                    2. **Sub-additivity**: Risk(A + B) ≤ Risk(A) + Risk(B) (diversification never hurts)
+                    3. **Positive homogeneity**: Doubling position size doubles risk
+                    4. **Translation invariance**: Adding cash reduces risk proportionally
+                    
+                    | Measure | Coherent? | Why / Why not |
+                    |---------|-----------|---------------|
+                    | Variance | ❌ | Penalizes upside; not monotonic |
+                    | VaR | ❌ | **Violates sub-additivity** (diversification can increase VaR) |
+                    | CVaR | ✅ | Satisfies all four axioms |
+                    
+                    ---
+                    
+                    ### The Rockafellar & Uryasev (2000) Breakthrough
+                    
+                    Before this paper, CVaR was hard to optimize because it involves:
+                    - The conditional expectation (need to identify tail scenarios)
+                    - Non-smooth indicator functions (is loss > VaR?)
+                    
+                    **Their insight:** CVaR can be computed by minimizing a **smooth convex function**:
+                    
+                    $$F_{\\alpha}(x, \\zeta) = \\zeta + \\frac{1}{1-\\alpha} \\mathbb{E}[[L(x,y) - \\zeta]^+]$$
+                    
+                    where:
+                    - $x$ = portfolio weights
+                    - $\\zeta$ = auxiliary variable (becomes VaR at optimum)
+                    - $L(x,y) = -R^T x$ = portfolio loss
+                    - $[z]^+ = \\max(z, 0)$
+                    
+                    **Key theorem (Paper, Theorem 1):**
+                    
+                    $$\\text{CVaR}_{\\alpha}(x) = \\min_{\\zeta \\in \\mathbb{R}} F_{\\alpha}(x, \\zeta)$$
+                    
+                    This transforms CVaR optimization into a **Linear Program** when using historical scenarios:
+                    
+                    $$
+                    \\begin{align}
+                    \\min_{x, \\zeta, u} \\quad & \\zeta + \\frac{1}{T(1-\\alpha)} \\sum_{t=1}^T u_t \\\\
+                    \\text{s.t.} \\quad & u_t \\geq -R_t^T x - \\zeta, \\quad \\forall t \\\\
+                    & u_t \\geq 0, \\quad \\forall t \\\\
+                    & \\sum_i x_i = 1, \\quad x_i \\geq 0
+                    \\end{align}
+                    $$
+                    
+                    **Intuition:**
+                    - $u_t$ captures how much scenario $t$ exceeds threshold $\\zeta$
+                    - The LP finds optimal $(x, \\zeta)$ that minimizes average tail loss
+                    - At optimum, $\\zeta^* = \\text{VaR}_{\\alpha}(x^*)$ and objective = $\\text{CVaR}_{\\alpha}(x^*)$
+                    
+                    ---
+                    
+                    ### Comparison: CVaR vs Your Other Strategies
+                    
+                    Let's see how CVaR compares to the portfolios you already have:
+                    """)
+                    
+                    # Display CVaR-specific metrics
+                    cvar_portfolio = analyzer.portfolios['cvar']
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("CVaR (daily)", f"{cvar_portfolio['cvar_value']*100:.3f}%",
+                                 help="Average loss in worst 5% of days")
+                    with col2:
+                        st.metric("VaR (daily)", f"{cvar_portfolio['var_value']*100:.3f}%",
+                                 help="5th percentile threshold")
+                    with col3:
+                        st.metric("Confidence Level", f"{cvar_portfolio['cvar_alpha']:.0%}")
+                    with col4:
+                        st.metric("Annualized CVaR", f"{cvar_portfolio['cvar_value']*np.sqrt(252)*100:.2f}%",
+                                 help="CVaR scaled to annual terms (approximate)")
+                    
+                    st.markdown("---")
+                    
+                    # Compare CVaR strategy with others
+                    st.markdown("#### 🔍 CVaR vs Other Strategies")
+                    
+                    comparison_metrics = []
+                    for key, p in analyzer.portfolios.items():
+                        # Calculate actual CVaR for each portfolio
+                        port_returns = p['returns']
+                        var_95 = port_returns.quantile(0.05)
+                        cvar_95 = port_returns[port_returns <= var_95].mean()
+                        
+                        comparison_metrics.append({
+                            'Strategy': p['name'],
+                            'Sharpe': f"{p['sharpe_ratio']:.3f}",
+                            'Max DD': f"{p['max_drawdown']*100:.2f}%",
+                            'VaR (5%)': f"{var_95*100:.3f}%",
+                            'CVaR (5%)': f"{cvar_95*100:.3f}%",
+                            'CVaR Rank': cvar_95  # For sorting
+                        })
+                    
+                    comparison_df = pd.DataFrame(comparison_metrics)
+                    comparison_df = comparison_df.sort_values('CVaR Rank')  # Lower CVaR = better
+                    comparison_df['#'] = range(1, len(comparison_df) + 1)
+                    comparison_df = comparison_df.drop('CVaR Rank', axis=1)
+                    comparison_df = comparison_df[['#', 'Strategy', 'Sharpe', 'Max DD', 'VaR (5%)', 'CVaR (5%)']]
+                    
+                    st.markdown(create_styled_table(comparison_df, "Ranked by CVaR (lower = better tail risk)"), unsafe_allow_html=True)
+                    
+                    cvar_rank = comparison_df[comparison_df['Strategy'] == cvar_portfolio['name']]['#'].values[0]
+                    
+                    if cvar_rank == 1:
+                        st.success(f"🏆 **CVaR strategy has the best (lowest) tail risk** among all strategies!")
+                    elif cvar_rank <= 3:
+                        st.info(f"📊 **CVaR strategy ranks #{cvar_rank}** in tail risk control.")
+                    else:
+                        st.warning(f"⚠️ **CVaR strategy ranks #{cvar_rank}** — other strategies have lower tail risk.")
+                    
+                    st.markdown("---")
+                    
+                    st.markdown("#### 💼 When to Use CVaR Optimization")
+                    
+                    st.markdown("""
+                    <div class='dashboard-card'>
+                    <p><strong>CVaR is ideal for:</strong></p>
+                    <ul>
+                        <li><strong>Risk-averse investors</strong>: You care more about avoiding large losses than maximizing returns</li>
+                        <li><strong>Liability-driven investing</strong>: You have obligations to meet and can't afford tail losses</li>
+                        <li><strong>Crisis periods</strong>: When market correlations spike and tail risk dominates</li>
+                        <li><strong>Regulatory compliance</strong>: Basel III uses CVaR (Expected Shortfall) for bank capital</li>
+                    </ul>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown("""
+                    <div class='dashboard-card'>
+                    <p><strong>Trade-offs to consider:</strong></p>
+                    <ul>
+                        <li><strong>Lower expected returns</strong>: CVaR portfolios sacrifice upside to control downside</li>
+                        <li><strong>Estimation risk</strong>: CVaR estimated on historical data may not predict future tail events</li>
+                        <li><strong>Ignores upside</strong>: Doesn't capture positive skewness (big gains)</li>
+                    </ul>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown("---")
+                    
+                    st.markdown("#### 📚 Key References")
+                    
+                    st.markdown("""
+                    1. **Rockafellar, R.T. & Uryasev, S. (2000).** "Optimization of Conditional Value-at-Risk." 
+                       *Journal of Risk*, 2(3), 21-41.
+                       - **The foundational paper** that made CVaR optimization practical
+                    
+                    2. **Artzner, P., Delbaen, F., Eber, J.M., & Heath, D. (1999).** "Coherent Measures of Risk." 
+                       *Mathematical Finance*, 9(3), 203-228.
+                       - Defines the axioms for coherent risk measures
+                    
+                    3. **Basel Committee on Banking Supervision (2016).** "Minimum Capital Requirements for Market Risk."
+                       - Why regulators prefer CVaR (Expected Shortfall) over VaR
+                    """)
+                    
+                    st.info("""
+                    📖 **Want to go deeper?** The original Rockafellar & Uryasev paper is highly readable 
+                    and includes many practical examples. Available at: 
+                    http://www.ise.ufl.edu/uryasev/publications/
+                    """)            
+            
             st.markdown("---")            
             
             col1, col2 = st.columns(2)
