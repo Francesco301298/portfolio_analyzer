@@ -3214,7 +3214,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     - $b$: Persistence of correlation
                     - $R_t$: Time-varying correlation matrix
                     
-                    **The DCC approach:**
+                    **This approach incorporates:**
                     1. **Flexible Probabilities**: Recent data gets more weight (exponential decay)
                     2. **GARCH filtering**: Separates volatility from correlation
                     3. **Parametric model**: Smooth estimates with mean-reversion
