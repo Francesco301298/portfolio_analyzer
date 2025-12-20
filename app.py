@@ -840,6 +840,50 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             
             status_text.text("💼 Optimizing portfolios (7 strategies)...")
             analyzer.build_all_portfolios()
+            # ============ ADD CUSTOM PORTFOLIO IF VALID ============
+            if st.session_state.get('custom_weights_valid', False) and st.session_state.get('custom_weights_dict'):
+                custom_weights_dict = st.session_state.custom_weights_dict
+                
+                # Build weights array in correct order (matching analyzer.symbols)
+                custom_weights_array = np.array([
+                    custom_weights_dict.get(ticker, 0) / 100.0 
+                    for ticker in analyzer.symbols
+                ])
+                
+                # Calculate portfolio returns
+                custom_returns = analyzer.returns.dot(custom_weights_array)
+                
+                # Calculate metrics
+                from core.metrics import calculate_portfolio_metrics
+                custom_metrics = calculate_portfolio_metrics(custom_returns, rf_rate)
+                
+                # Calculate cumulative return
+                custom_cumulative = (1 + custom_returns).cumprod()
+                custom_cum_return = custom_cumulative.iloc[-1] - 1
+                
+                # Calculate max drawdown
+                custom_rolling_max = custom_cumulative.expanding().max()
+                custom_drawdown = (custom_cumulative - custom_rolling_max) / custom_rolling_max
+                custom_max_dd = custom_drawdown.min()
+                
+                # Calculate Calmar ratio
+                n_years = len(custom_returns) / 252
+                custom_ann_return = (1 + custom_cum_return) ** (1 / n_years) - 1 if n_years > 0 else 0
+                custom_calmar = custom_ann_return / abs(custom_max_dd) if custom_max_dd != 0 else 0
+                
+                # Add to portfolios dict
+                analyzer.portfolios['custom'] = {
+                    'name': '👤 Your Portfolio',
+                    'weights': custom_weights_array,
+                    'returns': custom_returns,
+                    'cumulative_return': custom_cum_return,
+                    'annualized_return': custom_metrics['return'],
+                    'annualized_volatility': custom_metrics['volatility'],
+                    'sharpe_ratio': custom_metrics['sharpe'],
+                    'sortino_ratio': custom_metrics['sortino'],
+                    'max_drawdown': custom_max_dd,
+                    'calmar_ratio': custom_calmar
+                }            
             progress_bar.progress(85)
             
             benchmark_returns = None
