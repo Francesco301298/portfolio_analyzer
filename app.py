@@ -854,7 +854,6 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 custom_returns = analyzer.returns.dot(custom_weights_array)
                 
                 # Calculate metrics
-                from core.metrics import calculate_portfolio_metrics
                 custom_metrics = calculate_portfolio_metrics(custom_returns, risk_free_rate/100)
                 
                 # Calculate cumulative return
@@ -873,7 +872,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 
                 # Add to portfolios dict
                 analyzer.portfolios['custom'] = {
-                    'name': '👤 Your Portfolio',
+                    'name': 'Your Portfolio',
                     'weights': custom_weights_array,
                     'returns': custom_returns,
                     'cumulative_return': custom_cum_return,
