@@ -3199,6 +3199,20 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     1. All days in the window count equally (day 1 = day 60)
                     2. Old observations "fall off" abruptly
                     3. Mixes volatility effects with true correlation changes
+
+                    **The DCC (Dynamic Conditional Correlation) model:**
+                    
+                    Engle (2002) proposed modeling correlations as time-varying:
+                    
+                    $$Q_t = (1-a-b)\\bar{\\rho} + a \\cdot \\varepsilon_{t-1}\\varepsilon_{t-1}' + b \\cdot Q_{t-1}$$
+                    
+                    $$R_t = \\text{diag}(Q_t)^{-1/2} \\cdot Q_t \\cdot \\text{diag}(Q_t)^{-1/2}$$
+                    
+                    Where:
+                    - $\\bar{\\rho}$: Long-run (unconditional) correlation
+                    - $a$: Reaction to recent shocks
+                    - $b$: Persistence of correlation
+                    - $R_t$: Time-varying correlation matrix
                     
                     **The DCC approach:**
                     1. **Flexible Probabilities**: Recent data gets more weight (exponential decay)
