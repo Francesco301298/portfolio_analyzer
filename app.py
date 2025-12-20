@@ -855,7 +855,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                 
                 # Calculate metrics
                 from core.metrics import calculate_portfolio_metrics
-                custom_metrics = calculate_portfolio_metrics(custom_returns, rf_rate)
+                custom_metrics = calculate_portfolio_metrics(custom_returns, risk_free_rate/100)
                 
                 # Calculate cumulative return
                 custom_cumulative = (1 + custom_returns).cumprod()
