@@ -665,13 +665,13 @@ with st.sidebar:
         transaction_cost_bps = st.slider(
             "Cost per trade (bps)", 
             min_value=0, 
-            max_value=50, 
+            max_value=100, 
             value=10, 
             step=1,
             key="tx_cost",
             help="Basis points charged per transaction. 10 bps = 0.10%"
         )
-        st.caption("💡 Typical: 3-10 bps for ETFs, 10-30 bps for stocks")
+        st.caption("💡 Typical: 5-10 bps for ETFs, 10-50 bps for single stocks")
     else:
         transaction_cost_bps = 0
     
