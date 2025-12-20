@@ -10,6 +10,7 @@ Includes all portfolio optimization strategies:
 - Risk Parity
 - Markowitz Mean-Variance
 - Hierarchical Risk Parity (HRP)
+- CVaR Optimization
 """
 
 import pandas as pd
@@ -19,6 +20,7 @@ from scipy import stats
 from scipy.optimize import minimize
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
+from core.optimization import cvar_optimization
 import warnings
 import sys
 import os
@@ -712,3 +714,59 @@ class AdvancedPortfolioAnalyzer:
             frontier_df.to_excel(writer, sheet_name='Efficient Frontier', index=False)
         
         return filename
+
+
+
+def cvar_portfolio(self, alpha=0.95):
+    """
+    Create CVaR-optimized portfolio.
+    
+    Implementation based on Rockafellar & Uryasev (2000):
+    "Optimization of Conditional Value-at-Risk"
+    
+    CVaR (Conditional Value-at-Risk) minimizes the expected loss in the
+    worst (1-α)% of scenarios. This is a coherent risk measure (unlike VaR)
+    that better captures tail risk.
+    
+    The optimization uses Linear Programming to solve:
+        min CVaR_α(x) = min_ζ { ζ + (1/(1-α)) * E[[L(x) - ζ]^+] }
+    
+    Parameters:
+    -----------
+    alpha : float, default=0.95
+        Confidence level (0.95 = focus on worst 5% of scenarios)
+        
+    Returns:
+    --------
+    dict : Portfolio performance metrics with additional CVaR-specific info
+    
+    Notes:
+    ------
+    CVaR portfolios tend to be more diversified than mean-variance portfolios
+    because they directly penalize tail losses rather than total variance.
+    
+    References:
+    -----------
+    - Rockafellar, R.T. & Uryasev, S. (2000). "Optimization of Conditional 
+      Value-at-Risk." Journal of Risk, 2(3), 21-41.
+    """
+    returns_aligned = self.returns.reindex(columns=self.symbols)
+    
+    result = cvar_optimization(returns_aligned, alpha=alpha)
+    
+    if not result['success']:
+        print(f"Warning: CVaR optimization failed. Using equal weights.")
+    
+    optimal_weights = result['weights']
+    
+    # Calculate portfolio performance using existing method
+    portfolio_name = f"CVaR Optimized (α={alpha:.0%})"
+    self.portfolios['cvar'] = self._calculate_portfolio_performance(
+        optimal_weights, portfolio_name)
+    
+    # Add CVaR-specific metrics
+    self.portfolios['cvar']['cvar_alpha'] = alpha
+    self.portfolios['cvar']['cvar_value'] = result['cvar']
+    self.portfolios['cvar']['var_value'] = result['var']
+    
+    return self.portfolios['cvar']
