@@ -3920,19 +3920,24 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                                 'max_return': 'max_return',
                                 'max_sharpe': 'max_sharpe',
                                 'risk_parity': 'risk_parity',
-                                'markowitz': 'max_sharpe',  # Use max_sharpe as proxy
-                                'hrp': 'risk_parity'  # HRP uses different logic, approximate with RP
+                                'markowitz': 'markowitz',  # Use max_sharpe as proxy
+                                'hrp': 'risk_parity',  # HRP uses different logic, approximate with RP
+                                'custom': 'custom'  # Custom portfolio uses fixed weights
                             }
                             
                             method = method_map.get(strategy_key, 'equal')
                             strategy_name = strategy_names_map[strategy_key]
                             
                             # Optimize on TRAINING data only
-                            weights_train = optimize_portfolio_weights(
-                                returns_train,
-                                method=method,
-                                rf_rate=rf_rate
-                            )
+                            if method == 'custom':
+                                # Custom portfolio: use user-defined weights (no optimization)
+                                weights_train = analyzer.portfolios['custom']['weights']
+                            else:
+                                weights_train = optimize_portfolio_weights(
+                                    returns_train,
+                                    method=method,
+                                    rf_rate=rf_rate
+                                )                            
                             
                             # Calculate returns for BOTH periods using weights from training
                             train_portfolio_returns = returns_train.dot(weights_train)
