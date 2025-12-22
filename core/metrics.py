@@ -92,7 +92,9 @@ def calculate_robust_metrics(returns, rf_rate=0.0):
     
     # 5. CONDITIONAL VALUE AT RISK (CVaR at 95%)
     if len(returns) > 0:
-        cvar_95 = returns.quantile(0.05)
+        var_95 = returns.quantile(0.05)  # Questo è VaR (5° percentile)
+        tail_returns = returns[returns <= var_95]
+        cvar_95 = tail_returns.mean() if len(tail_returns) > 0 else var_95  # CVaR è la media della coda
     else:
         cvar_95 = np.nan
     
