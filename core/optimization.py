@@ -4,8 +4,11 @@ from scipy.optimize import linprog
 from scipy.optimize import minimize
 from core.metrics import calculate_portfolio_metrics
 
-def optimize_portfolio_weights(returns_df, method='max_sharpe', rf_rate=0.02):
+def optimize_portfolio_weights(returns_df, method='max_sharpe', rf_rate=0.02, **kwargs):
     """Optimize portfolio weights using specified method."""
+    from scipy.cluster.hierarchy import linkage
+    from scipy.spatial.distance import squareform
+    
     expected_returns = returns_df.mean() * 252
     cov_matrix = returns_df.cov() * 252
     n = len(returns_df.columns)
@@ -14,14 +17,28 @@ def optimize_portfolio_weights(returns_df, method='max_sharpe', rf_rate=0.02):
     if np.any(eigenvalues <= 0):
         cov_matrix = cov_matrix + np.eye(n) * 1e-8
     
+    equal_weights = np.array([1/n] * n)
+    
     if method == 'equal':
-        return np.array([1/n] * n)
+        return equal_weights
+    
     elif method == 'min_vol':
-        def vol(w): return np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
+        def vol(w): 
+            return np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
         constraints = {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
         bounds = tuple((0, 1) for _ in range(n))
         result = minimize(vol, [1/n]*n, method='SLSQP', bounds=bounds, constraints=constraints)
-        return result.x if result.success else np.array([1/n]*n)
+        return result.x if result.success else equal_weights
+    
+    # ===== AGGIUNGI QUESTO =====
+    elif method == 'max_return':
+        def neg_return(w):
+            return -np.dot(w, expected_returns)
+        constraints = {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
+        bounds = tuple((0, 1) for _ in range(n))
+        result = minimize(neg_return, [1/n]*n, method='SLSQP', bounds=bounds, constraints=constraints)
+        return result.x if result.success else equal_weights
+    
     elif method == 'max_sharpe':
         def neg_sharpe(w):
             ret = np.dot(w, expected_returns)
@@ -30,11 +47,13 @@ def optimize_portfolio_weights(returns_df, method='max_sharpe', rf_rate=0.02):
         constraints = {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
         bounds = tuple((0, 1) for _ in range(n))
         result = minimize(neg_sharpe, [1/n]*n, method='SLSQP', bounds=bounds, constraints=constraints)
-        return result.x if result.success else np.array([1/n]*n)
+        return result.x if result.success else equal_weights
+    
     elif method == 'risk_parity':
         def risk_contrib_error(w):
             port_vol = np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
-            if port_vol == 0: return 1e10
+            if port_vol == 0: 
+                return 1e10
             marginal = np.dot(cov_matrix, w)
             risk_contrib = w * marginal / port_vol
             target = port_vol / n
@@ -42,9 +61,106 @@ def optimize_portfolio_weights(returns_df, method='max_sharpe', rf_rate=0.02):
         constraints = {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
         bounds = tuple((0.001, 1) for _ in range(n))
         result = minimize(risk_contrib_error, [1/n]*n, method='SLSQP', bounds=bounds, constraints=constraints)
-        return result.x if result.success else np.array([1/n]*n)
+        return result.x if result.success else equal_weights
+    
+    # ===== AGGIUNGI QUESTO =====
+    elif method == 'markowitz':
+        target_return = kwargs.get('target_return', expected_returns.mean())
+        def portfolio_volatility(w):
+            return np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
+        constraints = [
+            {'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
+            {'type': 'eq', 'fun': lambda x, t=target_return: np.dot(x, expected_returns) - t}
+        ]
+        bounds = tuple((0, 1) for _ in range(n))
+        result = minimize(portfolio_volatility, [1/n]*n, method='SLSQP', bounds=bounds, constraints=constraints)
+        if not result.success:
+            return optimize_portfolio_weights(returns_df, method='max_sharpe', rf_rate=rf_rate)
+        return result.x
+    
+    # ===== AGGIUNGI QUESTO =====
+    elif method == 'hrp':
+        try:
+            corr_matrix = returns_df.corr()
+            cov_matrix_daily = returns_df.cov()
+            
+            if corr_matrix.isnull().any().any():
+                corr_matrix = corr_matrix.fillna(0)
+            np.fill_diagonal(corr_matrix.values, 1.0)
+            
+            distance_matrix = np.sqrt(0.5 * (1 - corr_matrix))
+            np.fill_diagonal(distance_matrix.values, 0)
+            
+            dist_condensed = squareform(distance_matrix.values, checks=False)
+            link = linkage(dist_condensed, method='single')
+            
+            # Quasi-diagonalization inline
+            link_int = link.astype(int)
+            num_items = link_int[-1, 3]
+            sort_idx = pd.Series([link_int[-1, 0], link_int[-1, 1]])
+            
+            while sort_idx.max() >= num_items:
+                sort_idx.index = range(0, sort_idx.shape[0] * 2, 2)
+                clusters = sort_idx[sort_idx >= num_items]
+                i = clusters.index
+                j = clusters.values - num_items
+                sort_idx[i] = link_int[j, 0]
+                right_children = pd.Series(link_int[j, 1], index=i + 1)
+                sort_idx = pd.concat([sort_idx, right_children])
+                sort_idx = sort_idx.sort_index()
+                sort_idx.index = range(sort_idx.shape[0])
+            
+            sorted_symbols = [returns_df.columns[i] for i in sort_idx.tolist()]
+            cov_sorted = cov_matrix_daily.loc[sorted_symbols, sorted_symbols]
+            
+            # Recursive bisection inline
+            weights = pd.Series(1.0, index=sorted_symbols)
+            clusters_list = [sorted_symbols]
+            
+            while len(clusters_list) > 0:
+                new_clusters = []
+                for cluster in clusters_list:
+                    if len(cluster) > 1:
+                        mid = len(cluster) // 2
+                        left, right = cluster[:mid], cluster[mid:]
+                        
+                        # Cluster variance (inverse-variance weighted)
+                        def get_cluster_var(cov, assets):
+                            cov_c = cov.loc[assets, assets]
+                            var_diag = np.maximum(np.diag(cov_c), 1e-10)
+                            inv_var = 1.0 / var_diag
+                            ivp_w = inv_var / inv_var.sum()
+                            return np.dot(ivp_w, np.dot(cov_c.values, ivp_w))
+                        
+                        var_left = get_cluster_var(cov_sorted, left)
+                        var_right = get_cluster_var(cov_sorted, right)
+                        
+                        alpha = 1 - var_left / (var_left + var_right) if (var_left + var_right) > 0 else 0.5
+                        weights[left] *= alpha
+                        weights[right] *= (1 - alpha)
+                        
+                        if len(left) > 1:
+                            new_clusters.append(left)
+                        if len(right) > 1:
+                            new_clusters.append(right)
+                
+                clusters_list = new_clusters
+            
+            weights = weights.reindex(returns_df.columns)
+            return (weights / weights.sum()).values
+            
+        except Exception as e:
+            print(f"HRP failed: {e}")
+            return equal_weights
+    
+    elif method == 'cvar':
+        alpha = kwargs.get('alpha', 0.95)
+        result = cvar_optimization(returns_df, alpha=alpha)
+        return result['weights']
+    
     else:
-        return np.array([1/n] * n)
+        print(f"Warning: Unknown method '{method}'")
+        return equal_weights
 
 def run_walk_forward_analysis(returns_df, train_ratio=0.7, methods=None, rf_rate=0.02):
     """Perform Walk-Forward Analysis with train/test split."""
