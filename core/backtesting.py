@@ -69,6 +69,15 @@ def run_cpcv_backtest(
     """
     Run combinatorial purged cross-validation with multi-metric evaluation.
     """
+    method_key_map = {
+        "Equally Weighted": "equal",
+        "Minimum Volatility": "min_vol",
+        "Maximum Sharpe": "max_sharpe",
+        "Maximum Return": "max_return",
+        "Risk Parity": "risk_parity",
+        "CVaR (95%)": "cvar",
+        "Your Portfolio": "custom"
+    }    
     splits = combinatorial_purged_cv(
         returns_df.index,
         n_splits,
