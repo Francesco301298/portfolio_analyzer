@@ -5050,726 +5050,726 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
 
 # Part 8: Frontier, Benchmark, Export, Footer
 
-# TAB 6: FRONTIER
-with tab6:
-    st.markdown("### 📐 Efficient Frontier")
-    
-    st.markdown("""
-    The **Efficient Frontier** represents the set of optimal portfolios that offer the highest 
-    expected return for a given level of risk (or the lowest risk for a given return level).
-    
-    This visualization helps you understand where your optimized strategies stand relative 
-    to the universe of all possible portfolio combinations.
-    """)
-    
-    # ================================================================
-    # FRONTIER TYPE SELECTOR
-    # ================================================================
-    frontier_type = st.radio(
-        "Select Frontier Type",
-        ["📊 Mean-Variance (Traditional)", "📉 Mean-CVaR (Tail Risk)"],
-        horizontal=True,
-        key="frontier_type_selector"
-    )
-    
-    # ================================================================
-    # UNIFIED EDUCATIONAL SECTION
-    # ================================================================
-    with st.expander("📚 Understanding the Efficient Frontier", expanded=False):
-        st.markdown("""
-        ### What is the Efficient Frontier?
-        
-        The Efficient Frontier is a cornerstone concept of **Modern Portfolio Theory (MPT)**, 
-        introduced by Harry Markowitz in 1952. It answers a fundamental question:
-        
-        > *"Given a set of assets, what is the best possible combination of risk and return I can achieve?"*
-        
-        ---
-        
-        ### Key Concepts
-        
-        **1. The Risk-Return Trade-off**
-        
-        In finance, higher returns typically come with higher risk. The Efficient Frontier 
-        shows the **optimal trade-off**: portfolios on the frontier give you the maximum 
-        return for each level of risk you're willing to accept.
-        
-        **2. Diversification Benefit**
-        
-        The "bullet" shape of the portfolio cloud demonstrates the power of diversification:
-        - By combining assets that don't move perfectly together (correlation < 1), 
-        you can achieve **lower portfolio volatility** than holding any single asset
-        - The leftmost point of the frontier represents the **Global Minimum Variance Portfolio**
-        
-        **3. Dominated vs Efficient Portfolios**
-        
-        - **Efficient portfolios** (on the frontier): No other portfolio offers higher return 
-        for the same risk, or lower risk for the same return
-        - **Dominated portfolios** (inside the cloud): Suboptimal—you could do better by 
-        moving to the frontier
-        
-        ---
-        
-        ### Two Types of Efficient Frontiers
-        
-        #### 📊 Mean-Variance Frontier (Markowitz, 1952)
-        
-        The traditional efficient frontier uses **standard deviation (volatility)** as the risk measure.
-        
-        **Optimization problem:**
-        $$\\min_w \\sigma_p = \\sqrt{w^T \\Sigma w}$$
-        $$\\text{subject to: } w^T \\mu = \\mu_{target}, \\quad \\sum w_i = 1$$
-        
-        **Advantages:**
-        - Well-established theory with decades of academic research
-        - Computationally efficient (quadratic programming)
-        - Intuitive interpretation
-        - Captures overall portfolio variability
-        
-        **Limitations:**
-        - Assumes returns are normally distributed
-        - Penalizes upside and downside volatility equally
-        - Underestimates tail risk and extreme events
-        - Does not distinguish between good volatility (gains) and bad volatility (losses)
-        
-        ---
-        
-        #### 📉 Mean-CVaR Frontier (Rockafellar & Uryasev, 2000)
-        
-        This frontier uses **Conditional Value-at-Risk (CVaR)** as the risk measure.
-        
-        **What is CVaR?**
-        $$\\text{CVaR}_{\\alpha} = \\mathbb{E}[R | R \\leq \\text{VaR}_{\\alpha}]$$
-        
-        CVaR₉₅ answers: *"What is the average return in the worst 5% of scenarios?"*
-        
-        **Optimization problem:**
-        $$\\min_w \\text{CVaR}_{\\alpha}(w)$$
-        $$\\text{subject to: } w^T \\mu = \\mu_{target}, \\quad \\sum w_i = 1$$
-        
-        **Advantages:**
-        - Coherent risk measure (unlike VaR)
-        - Focuses specifically on tail risk (what really hurts portfolios)
-        - Better for non-normal distributions (captures fat tails and skewness)
-        - Captures "black swan" events more effectively
-        - Aligns with investor psychology (we fear large losses more than we enjoy equivalent gains)
-        
-        **Key Differences from Mean-Variance:**
-        - Portfolios on the CVaR frontier may differ significantly from the Variance frontier
-        - Often more conservative in extreme tail scenarios
-        - May suggest different asset allocations, especially for assets with asymmetric returns
-        - The shape of the CVaR frontier is typically more linear due to CVaR being a coherent risk measure
-        
-        **Important Note on CVaR:**
-        CVaR has an additional estimation challenge: it's calculated from only the **worst α% of observations**. 
-        With 1000 days of data and α=0.95, that's only ~50 data points—leading to higher estimation error 
-        than volatility-based measures.
-        
-        ---
-        
-        ### How to Read the Chart
-        
-        | Element | What it represents |
-        |---------|-------------------|
-        | **Cloud of dots** | Random portfolio combinations (the "feasible region") |
-        | **Upper-left boundary** | The Efficient Frontier itself |
-        | **Colored markers** | Your optimized portfolio strategies |
-        | **X-axis** | Risk measure (Volatility for Mean-Variance, CVaR for Mean-CVaR) |
-        | **Y-axis** | Expected annualized return |
-        
-        ---
-        
-        ### Interpreting Your Strategies
-        
-        - **On the frontier**: Your optimization is working well—the strategy is efficient
-        - **Below the frontier**: The strategy may have constraints (e.g., transaction costs, 
-        rebalancing rules, estimation error) that prevent it from reaching theoretical optimality
-        - **Similar positions**: Multiple strategies clustering together suggests they 
-        produce similar risk-return profiles despite different methodologies
-        
-        ---
-        
-        ### Limitations to Keep in Mind
-        
-        1. **Based on historical data**: Past correlations and returns may not persist
-        2. **Estimation error**: Both expected returns and risk measures are estimated with noise
-        3. **Static view**: The frontier shifts as market conditions change
-        4. **Transaction costs**: Theoretical frontier doesn't account for trading frictions
-        5. **Model risk**: Both approaches make simplifying assumptions about return distributions
-        
-        ---
-        
-        📖 **Key References**: 
-        - Markowitz, H. (1952). "Portfolio Selection." *The Journal of Finance*, 7(1), 77-91.
-        - Rockafellar & Uryasev (2000). "Optimization of CVaR." *Journal of Risk*
-        - Krokhmal et al. (2002). "Portfolio Optimization with CVaR." *Journal of Risk*
-        """)
-    
-    st.markdown("---")
-    
-    # ================================================================
-    # CONFIGURATION
-    # ================================================================
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        n_portfolios = st.slider(
-            "Number of random portfolios", 
-            2000, 20000, 10000, 
-            step=1000, 
-            key="n_port",
-            help="More portfolios = smoother frontier visualization"
-        )
-    with col2:
-        allow_short = st.checkbox(
-            "Allow short selling", 
-            value=False, 
-            key="allow_short",
-            help="If enabled, portfolio weights can be negative (betting against assets)"
-        )
-    with col3:
-        if frontier_type == "📉 Mean-CVaR (Tail Risk)":
-            cvar_alpha = st.selectbox(
-                "CVaR Confidence Level",
-                options=[0.90, 0.95, 0.99],
-                index=1,
-                format_func=lambda x: f"{x:.0%} (worst {(1-x)*100:.0f}%)",
-                key="cvar_alpha"
-            )
-        else:
-            cvar_alpha = 0.95  # Default, not used for Mean-Variance
-    
-    # ================================================================
-    # GENERATE PORTFOLIOS
-    # ================================================================
-    with st.spinner(f"Generating {n_portfolios:,} portfolios..."):
-        
-        # ===== SETUP =====
-        returns_aligned = analyzer.returns.reindex(columns=analyzer.symbols)
-        returns_matrix = returns_aligned.values
-        n_assets = len(analyzer.symbols)
-        
-        # Annualized covariance and returns
-        cov_matrix = returns_aligned.cov() * 252
-        mean_returns = returns_aligned.mean() * 252
-        
-        # ===== GENERATE RANDOM PORTFOLIOS =====
-        np.random.seed(42)
-        
-        portfolio_returns = []
-        portfolio_risk_list = []  # Will contain volatility OR CVaR depending on frontier type
-        portfolio_volatilities = []  # Always store volatility for Sharpe calculation
-        portfolio_sharpes = []
-        portfolio_weights = []
-        
-        dirichlet_alpha = 2.0
-        
-        for _ in range(n_portfolios):
-            if allow_short:
-                w = np.random.normal(1, 0.3, n_assets)
-                w = w / np.sum(w)
-            else:
-                w = np.random.dirichlet(np.ones(n_assets) * dirichlet_alpha)
+        # TAB 6: FRONTIER
+        with tab6:
+            st.markdown("### 📐 Efficient Frontier")
             
-            # Calculate return (same for both frontiers)
-            port_return = np.dot(mean_returns, w)
-            
-            # Calculate volatility (always needed for Sharpe)
-            port_variance = np.dot(w, np.dot(cov_matrix, w))
-            port_volatility = np.sqrt(port_variance)
-            
-            # Calculate risk metric based on frontier type
-            if frontier_type == "📊 Mean-Variance (Traditional)":
-                port_risk = port_volatility  # Annualized volatility
-            else:
-                # CVaR calculation
-                daily_portfolio_returns = returns_matrix @ w
-                var_threshold = np.percentile(daily_portfolio_returns, 100 * (1 - cvar_alpha))
-                tail_returns = daily_portfolio_returns[daily_portfolio_returns <= var_threshold]
-                if len(tail_returns) > 0:
-                    port_risk = -tail_returns.mean() * np.sqrt(252)  # Annualized, positive = bad
-                else:
-                    port_risk = -var_threshold * np.sqrt(252)
-            
-            # Sharpe ratio (always using volatility)
-            port_sharpe = (port_return - rf_rate) / port_volatility if port_volatility > 0 else 0
-            
-            portfolio_returns.append(port_return * 100)
-            portfolio_risk_list.append(port_risk * 100)
-            portfolio_volatilities.append(port_volatility * 100)
-            portfolio_sharpes.append(port_sharpe)
-            portfolio_weights.append(w)
-        
-        # ===== YOUR OPTIMIZED PORTFOLIOS =====
-        strategy_returns = []
-        strategy_risk = []
-        strategy_volatilities = []  # Always store volatility
-        strategy_names = []
-        strategy_sharpes = []
-        
-        for p_name, p in analyzer.portfolios.items():
-            strat_return = p['annualized_return'] * 100
-            strat_volatility = p['annualized_volatility'] * 100
-            strat_sharpe = p['sharpe_ratio']
-            
-            strategy_returns.append(strat_return)
-            strategy_volatilities.append(strat_volatility)
-            strategy_names.append(p['name'])
-            strategy_sharpes.append(strat_sharpe)
-            
-            # Risk metric based on frontier type
-            if frontier_type == "📊 Mean-Variance (Traditional)":
-                strat_risk = strat_volatility
-            else:
-                # Calculate CVaR for this portfolio
-                port_daily_returns = p['returns'].values
-                var_threshold = np.percentile(port_daily_returns, 100 * (1 - cvar_alpha))
-                tail = port_daily_returns[port_daily_returns <= var_threshold]
-                if len(tail) > 0:
-                    strat_cvar = -tail.mean() * np.sqrt(252) * 100  # Annualized %
-                else:
-                    strat_cvar = -var_threshold * np.sqrt(252) * 100
-                strat_risk = strat_cvar
-            
-            strategy_risk.append(strat_risk)
-        
-        # ===== CREATE CHART =====
-        fig = go.Figure()
-        
-        # Labels based on frontier type
-        if frontier_type == "📊 Mean-Variance (Traditional)":
-            risk_label = "Annualized Volatility (Standard Deviation) %"
-            cloud_color = 'rgba(255, 107, 107, 0.4)'
-        else:
-            risk_label = f"Annualized CVaR{int(cvar_alpha*100)} (Tail Risk) %"
-            cloud_color = 'rgba(147, 112, 219, 0.4)'
-        
-        # 1. Random portfolios (cloud)
-        fig.add_trace(go.Scatter(
-            x=portfolio_risk_list,
-            y=portfolio_returns,
-            mode='markers',
-            name=f'Random Portfolios ({n_portfolios:,})',
-            marker=dict(
-                size=3,
-                color=cloud_color,
-                symbol='circle'
-            ),
-            hovertemplate=f'Return: %{{y:.2f}}%<br>{risk_label.split(" %")[0]}: %{{x:.2f}}%<extra></extra>'
-        ))
-        
-        # 2. Your optimized portfolios (colored markers)
-        portfolio_colors = ['#FFE66D', '#A855F7', '#6366F1', '#FF9F43', '#EC4899', '#10B981', '#F59E0B']
-        portfolio_symbols = ['star', 'diamond', 'hexagon', 'pentagon', 'circle', 'square', 'triangle-up']
-        
-        for i, (x_val, y_val, name, sharpe) in enumerate(zip(strategy_risk, strategy_returns, strategy_names, strategy_sharpes)):
-            fig.add_trace(go.Scatter(
-                x=[x_val],
-                y=[y_val],
-                mode='markers',
-                name=name,
-                marker=dict(
-                    size=18,
-                    color=portfolio_colors[i % len(portfolio_colors)],
-                    symbol=portfolio_symbols[i % len(portfolio_symbols)],
-                    line=dict(width=2, color='white')
-                ),
-                hovertemplate=f'<b>{name}</b><br>Return: %{{y:.2f}}%<br>{risk_label.split(" %")[0]}: %{{x:.2f}}%<br>Sharpe: {sharpe:.3f}<extra></extra>'
-            ))
-        
-        # Layout
-        fig.update_layout(
-            height=650,
-            xaxis_title=risk_label,
-            yaxis_title="Annualized Return %",
-            legend=dict(
-                orientation="v",
-                yanchor="top",
-                y=0.99,
-                xanchor="left",
-                x=1.02,
-                bgcolor='rgba(26,26,36,0.95)',
-                bordercolor='rgba(99,102,241,0.5)',
-                borderwidth=1,
-                font=dict(size=10)
-            ),
-            hovermode='closest',
-            margin=dict(r=200)
-        )
-        
-        fig = apply_plotly_theme(fig)
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # ===== QUICK STATS =====
-        st.markdown("---")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("🎲 Simulated Portfolios", f"{n_portfolios:,}")
-        with col2:
-            best_sharpe_idx = np.argmax(portfolio_sharpes)
-            st.metric("⭐ Best Random Sharpe", f"{portfolio_sharpes[best_sharpe_idx]:.3f}")
-        with col3:
-            min_risk_idx = np.argmin(portfolio_risk_list)
-            risk_type = "Volatility" if frontier_type == "📊 Mean-Variance (Traditional)" else "CVaR"
-            st.metric(f"📉 Min {risk_type}", f"{portfolio_risk_list[min_risk_idx]:.2f}%")
-        with col4:
-            max_ret_idx = np.argmax(portfolio_returns)
-            st.metric("📈 Max Return Found", f"{portfolio_returns[max_ret_idx]:.2f}%")
-        
-        # ===== WHY SOME STRATEGIES ARE INSIDE THE CLOUD =====
-        st.markdown("---")
-
-        with st.expander("📚 Why Are Some Strategies Inside the Cloud?", expanded=False):
             st.markdown("""
-            You might wonder: *"If I optimized these portfolios, why aren't they all on the efficient frontier?"*
+            The **Efficient Frontier** represents the set of optimal portfolios that offer the highest 
+            expected return for a given level of risk (or the lowest risk for a given return level).
             
-            This is one of the most important insights in modern portfolio theory.
-            
-            ---
-            
-            ### The Efficient Frontier is "Optimal" Only in Hindsight
-            
-            The frontier you see is calculated using **historical data**. It shows the best you 
-            *could have done* if you had known the future perfectly. But when these strategies 
-            were "optimized," they only had access to past data—just like in real investing.
-            
-            ---
-            
-            ### The Problem: Estimation Error
-            
-            Markowitz optimization requires estimating **expected returns** and **covariances**. 
-            These estimates are extremely noisy:
-            
-            > Merton (1980) showed that estimating expected returns with the same precision as 
-            > volatility would require **~500 years of data**.
-            
-            Worse, mean-variance optimization **amplifies these errors**—it overweights assets 
-            with overestimated returns and underweights those with underestimated returns.
-            
-            > Michaud (1989) called this phenomenon **"error maximization."**
-            
-            ---
-            
-            ### The Surprising Truth: Simple Often Beats "Optimal"
-            
-            In a landmark study, **DeMiguel, Garlappi & Uppal (2009)** compared 14 optimization 
-            strategies against the naive 1/N (Equal Weight) portfolio across 7 datasets.
-            
-            **Result:** No optimized strategy consistently beat Equal Weight out-of-sample!
-            
-            They estimated that **~250 years of data** would be needed for mean-variance 
-            optimization to reliably outperform 1/N.
-            
-            ---
-            
-            ### An Additional Problem: Volatility (Standard Deviation) Isn't "Risk"
-            
-            The entire framework assumes returns are **normally distributed**. In reality, 
-            financial returns exhibit:
-            
-            - **Fat tails**: Extreme events happen far more often than the normal distribution predicts
-            - **Skewness**: Crashes are sharper than rallies
-            - **Volatility clustering**: Calm and turbulent periods cluster together
-            
-            > Mandelbrot (1963) and Cont (2001) documented these "stylized facts" that violate 
-            > the normality assumption underlying mean-variance optimization.
-            
-            Volatility also **penalizes gains equally with losses**—but investors don't mind 
-            upside volatility! This is why metrics like **Sortino** and **CVaR** are often 
-            more meaningful than Sharpe.
-            
-            ---
-            
-            ### For Mean-CVaR Specifically
-            
-            The same estimation issues apply to CVaR, with an additional challenge: CVaR is 
-            estimated from only the **worst α% of observations**. With 1000 days of data and 
-            α=0.95, that's only ~50 data points for CVaR estimation—leading to high estimation error!
-            
-            ---
-            
-            ### The Bottom Line
-            
-            > **The efficient frontier shows the best you could have done with perfect foresight. 
-            > Strategies like Equal Weight, Risk Parity, and HRP accept being "suboptimal" 
-            > in-sample to be more robust when the future is uncertain—which is always.**
-            
-            ---
-            
-            #### 📖 Key References
-            
-            - Markowitz, H. (1952). "Portfolio Selection." *Journal of Finance*
-            - Merton, R.C. (1980). "On Estimating the Expected Return on the Market." *JFE*
-            - Michaud, R.O. (1989). "The Markowitz Optimization Enigma." *FAJ*
-            - DeMiguel, V. et al. (2009). "Optimal Versus Naive Diversification." *RFS*
-            - López de Prado, M. (2016). "Building Diversified Portfolios that Outperform Out-of-Sample." *JPM*
-            - Mandelbrot, B. (1963). "The Variation of Certain Speculative Prices." *Journal of Business*
-            - Cont, R. (2001). "Empirical Properties of Asset Returns." *Quantitative Finance*
+            This visualization helps you understand where your optimized strategies stand relative 
+            to the universe of all possible portfolio combinations.
             """)
-        
-        st.markdown("---")
-        
-        # ================================================================
-        # FRONTIER EXPLORER
-        # ================================================================
-        st.markdown("#### 🔍 Explore the Frontier")
-        
-        st.markdown("""
-        Use the slider below to explore portfolios along the efficient frontier. 
-        Select different risk levels and compare with your optimized strategies.
-        """)
-        
-        # Find approximate frontier by bucketing risk and finding max return
-        n_buckets = 50
-        risk_min, risk_max = min(portfolio_risk_list), max(portfolio_risk_list)
-        bucket_size = (risk_max - risk_min) / n_buckets
-        
-        frontier_points = []
-        for i in range(n_buckets):
-            bucket_start = risk_min + i * bucket_size
-            bucket_end = bucket_start + bucket_size
             
-            bucket_indices = [
-                j for j, v in enumerate(portfolio_risk_list) 
-                if bucket_start <= v < bucket_end
-            ]
+            # ================================================================
+            # FRONTIER TYPE SELECTOR
+            # ================================================================
+            frontier_type = st.radio(
+                "Select Frontier Type",
+                ["📊 Mean-Variance (Traditional)", "📉 Mean-CVaR (Tail Risk)"],
+                horizontal=True,
+                key="frontier_type_selector"
+            )
             
-            if bucket_indices:
-                best_idx = max(bucket_indices, key=lambda j: portfolio_returns[j])
-                frontier_points.append({
-                    'risk': portfolio_risk_list[best_idx],
-                    'return': portfolio_returns[best_idx],
-                    'volatility': portfolio_volatilities[best_idx],  # Always store volatility
-                    'sharpe': portfolio_sharpes[best_idx],
-                    'weights': portfolio_weights[best_idx]
-                })
-        
-        if frontier_points:
-            # Controls row
-            ctrl_col1, ctrl_col2 = st.columns([2, 1])
+            # ================================================================
+            # UNIFIED EDUCATIONAL SECTION
+            # ================================================================
+            with st.expander("📚 Understanding the Efficient Frontier", expanded=False):
+                st.markdown("""
+                ### What is the Efficient Frontier?
+                
+                The Efficient Frontier is a cornerstone concept of **Modern Portfolio Theory (MPT)**, 
+                introduced by Harry Markowitz in 1952. It answers a fundamental question:
+                
+                > *"Given a set of assets, what is the best possible combination of risk and return I can achieve?"*
+                
+                ---
+                
+                ### Key Concepts
+                
+                **1. The Risk-Return Trade-off**
+                
+                In finance, higher returns typically come with higher risk. The Efficient Frontier 
+                shows the **optimal trade-off**: portfolios on the frontier give you the maximum 
+                return for each level of risk you're willing to accept.
+                
+                **2. Diversification Benefit**
+                
+                The "bullet" shape of the portfolio cloud demonstrates the power of diversification:
+                - By combining assets that don't move perfectly together (correlation < 1), 
+                you can achieve **lower portfolio volatility** than holding any single asset
+                - The leftmost point of the frontier represents the **Global Minimum Variance Portfolio**
+                
+                **3. Dominated vs Efficient Portfolios**
+                
+                - **Efficient portfolios** (on the frontier): No other portfolio offers higher return 
+                for the same risk, or lower risk for the same return
+                - **Dominated portfolios** (inside the cloud): Suboptimal—you could do better by 
+                moving to the frontier
+                
+                ---
+                
+                ### Two Types of Efficient Frontiers
+                
+                #### 📊 Mean-Variance Frontier (Markowitz, 1952)
+                
+                The traditional efficient frontier uses **standard deviation (volatility)** as the risk measure.
+                
+                **Optimization problem:**
+                $$\\min_w \\sigma_p = \\sqrt{w^T \\Sigma w}$$
+                $$\\text{subject to: } w^T \\mu = \\mu_{target}, \\quad \\sum w_i = 1$$
+                
+                **Advantages:**
+                - Well-established theory with decades of academic research
+                - Computationally efficient (quadratic programming)
+                - Intuitive interpretation
+                - Captures overall portfolio variability
+                
+                **Limitations:**
+                - Assumes returns are normally distributed
+                - Penalizes upside and downside volatility equally
+                - Underestimates tail risk and extreme events
+                - Does not distinguish between good volatility (gains) and bad volatility (losses)
+                
+                ---
+                
+                #### 📉 Mean-CVaR Frontier (Rockafellar & Uryasev, 2000)
+                
+                This frontier uses **Conditional Value-at-Risk (CVaR)** as the risk measure.
+                
+                **What is CVaR?**
+                $$\\text{CVaR}_{\\alpha} = \\mathbb{E}[R | R \\leq \\text{VaR}_{\\alpha}]$$
+                
+                CVaR₉₅ answers: *"What is the average return in the worst 5% of scenarios?"*
+                
+                **Optimization problem:**
+                $$\\min_w \\text{CVaR}_{\\alpha}(w)$$
+                $$\\text{subject to: } w^T \\mu = \\mu_{target}, \\quad \\sum w_i = 1$$
+                
+                **Advantages:**
+                - Coherent risk measure (unlike VaR)
+                - Focuses specifically on tail risk (what really hurts portfolios)
+                - Better for non-normal distributions (captures fat tails and skewness)
+                - Captures "black swan" events more effectively
+                - Aligns with investor psychology (we fear large losses more than we enjoy equivalent gains)
+                
+                **Key Differences from Mean-Variance:**
+                - Portfolios on the CVaR frontier may differ significantly from the Variance frontier
+                - Often more conservative in extreme tail scenarios
+                - May suggest different asset allocations, especially for assets with asymmetric returns
+                - The shape of the CVaR frontier is typically more linear due to CVaR being a coherent risk measure
+                
+                **Important Note on CVaR:**
+                CVaR has an additional estimation challenge: it's calculated from only the **worst α% of observations**. 
+                With 1000 days of data and α=0.95, that's only ~50 data points—leading to higher estimation error 
+                than volatility-based measures.
+                
+                ---
+                
+                ### How to Read the Chart
+                
+                | Element | What it represents |
+                |---------|-------------------|
+                | **Cloud of dots** | Random portfolio combinations (the "feasible region") |
+                | **Upper-left boundary** | The Efficient Frontier itself |
+                | **Colored markers** | Your optimized portfolio strategies |
+                | **X-axis** | Risk measure (Volatility for Mean-Variance, CVaR for Mean-CVaR) |
+                | **Y-axis** | Expected annualized return |
+                
+                ---
+                
+                ### Interpreting Your Strategies
+                
+                - **On the frontier**: Your optimization is working well—the strategy is efficient
+                - **Below the frontier**: The strategy may have constraints (e.g., transaction costs, 
+                rebalancing rules, estimation error) that prevent it from reaching theoretical optimality
+                - **Similar positions**: Multiple strategies clustering together suggests they 
+                produce similar risk-return profiles despite different methodologies
+                
+                ---
+                
+                ### Limitations to Keep in Mind
+                
+                1. **Based on historical data**: Past correlations and returns may not persist
+                2. **Estimation error**: Both expected returns and risk measures are estimated with noise
+                3. **Static view**: The frontier shifts as market conditions change
+                4. **Transaction costs**: Theoretical frontier doesn't account for trading frictions
+                5. **Model risk**: Both approaches make simplifying assumptions about return distributions
+                
+                ---
+                
+                📖 **Key References**: 
+                - Markowitz, H. (1952). "Portfolio Selection." *The Journal of Finance*, 7(1), 77-91.
+                - Rockafellar & Uryasev (2000). "Optimization of CVaR." *Journal of Risk*
+                - Krokhmal et al. (2002). "Portfolio Optimization with CVaR." *Journal of Risk*
+                """)
             
-            with ctrl_col1:
-                frontier_position = st.slider(
-                    "Risk Level (0% = Min Risk, 100% = Max Risk)",
-                    min_value=0,
-                    max_value=100,
-                    value=30,
-                    step=5,
-                    key="frontier_slider"
-                )
+            st.markdown("---")
             
-            with ctrl_col2:
-                compare_strategy = st.selectbox(
-                    "Compare with strategy",
-                    options=list(analyzer.portfolios.keys()),
-                    format_func=lambda x: analyzer.portfolios[x]['name'],
-                    key="compare_strategy"
-                )
-            
-            frontier_idx = int((frontier_position / 100) * (len(frontier_points) - 1))
-            selected = frontier_points[frontier_idx]
-            
-            # ===== METRICS AND WEIGHTS =====
-            col1, col2 = st.columns([1, 1.5])
-            
+            # ================================================================
+            # CONFIGURATION
+            # ================================================================
+            col1, col2, col3 = st.columns(3)
             with col1:
-                st.markdown("##### 📊 Selected Frontier Portfolio")
-                
-                # Risk profile indicator
-                if frontier_position < 25:
-                    risk_profile = "🛡️ Conservative"
-                    risk_color = "#4ECDC4"
-                elif frontier_position < 50:
-                    risk_profile = "⚖️ Moderate"
-                    risk_color = "#FFE66D"
-                elif frontier_position < 75:
-                    risk_profile = "📈 Growth"
-                    risk_color = "#FF9F43"
-                else:
-                    risk_profile = "🚀 Aggressive"
-                    risk_color = "#FF6B6B"
-                
-                st.markdown(f"**Profile:** <span style='color:{risk_color}; font-size:1.1em;'>{risk_profile}</span>", unsafe_allow_html=True)
-                
-                mcols = st.columns(2)
-                mcols[0].metric("Return", f"{selected['return']:.2f}%")
-                mcols[1].metric("Volatility", f"{selected['volatility']:.2f}%")
-                
-                mcols2 = st.columns(2)
-                mcols2[0].metric("Sharpe", f"{selected['sharpe']:.3f}")
-                mcols2[1].metric("Risk Level", f"{frontier_position}%")
-            
+                n_portfolios = st.slider(
+                    "Number of random portfolios", 
+                    2000, 20000, 10000, 
+                    step=1000, 
+                    key="n_port",
+                    help="More portfolios = smoother frontier visualization"
+                )
             with col2:
-                st.markdown("##### ⚖️ Asset Allocation")
+                allow_short = st.checkbox(
+                    "Allow short selling", 
+                    value=False, 
+                    key="allow_short",
+                    help="If enabled, portfolio weights can be negative (betting against assets)"
+                )
+            with col3:
+                if frontier_type == "📉 Mean-CVaR (Tail Risk)":
+                    cvar_alpha = st.selectbox(
+                        "CVaR Confidence Level",
+                        options=[0.90, 0.95, 0.99],
+                        index=1,
+                        format_func=lambda x: f"{x:.0%} (worst {(1-x)*100:.0f}%)",
+                        key="cvar_alpha"
+                    )
+                else:
+                    cvar_alpha = 0.95  # Default, not used for Mean-Variance
+            
+            # ================================================================
+            # GENERATE PORTFOLIOS
+            # ================================================================
+            with st.spinner(f"Generating {n_portfolios:,} portfolios..."):
                 
-                weights_data = []
-                for ticker, weight in zip(analyzer.symbols, selected['weights']):
-                    if abs(weight) > 0.01:
-                        weights_data.append({
-                            'Asset': get_display_name(ticker),
-                            'Ticker': ticker,
-                            'Weight': weight * 100
+                # ===== SETUP =====
+                returns_aligned = analyzer.returns.reindex(columns=analyzer.symbols)
+                returns_matrix = returns_aligned.values
+                n_assets = len(analyzer.symbols)
+                
+                # Annualized covariance and returns
+                cov_matrix = returns_aligned.cov() * 252
+                mean_returns = returns_aligned.mean() * 252
+                
+                # ===== GENERATE RANDOM PORTFOLIOS =====
+                np.random.seed(42)
+                
+                portfolio_returns = []
+                portfolio_risk_list = []  # Will contain volatility OR CVaR depending on frontier type
+                portfolio_volatilities = []  # Always store volatility for Sharpe calculation
+                portfolio_sharpes = []
+                portfolio_weights = []
+                
+                dirichlet_alpha = 2.0
+                
+                for _ in range(n_portfolios):
+                    if allow_short:
+                        w = np.random.normal(1, 0.3, n_assets)
+                        w = w / np.sum(w)
+                    else:
+                        w = np.random.dirichlet(np.ones(n_assets) * dirichlet_alpha)
+                    
+                    # Calculate return (same for both frontiers)
+                    port_return = np.dot(mean_returns, w)
+                    
+                    # Calculate volatility (always needed for Sharpe)
+                    port_variance = np.dot(w, np.dot(cov_matrix, w))
+                    port_volatility = np.sqrt(port_variance)
+                    
+                    # Calculate risk metric based on frontier type
+                    if frontier_type == "📊 Mean-Variance (Traditional)":
+                        port_risk = port_volatility  # Annualized volatility
+                    else:
+                        # CVaR calculation
+                        daily_portfolio_returns = returns_matrix @ w
+                        var_threshold = np.percentile(daily_portfolio_returns, 100 * (1 - cvar_alpha))
+                        tail_returns = daily_portfolio_returns[daily_portfolio_returns <= var_threshold]
+                        if len(tail_returns) > 0:
+                            port_risk = -tail_returns.mean() * np.sqrt(252)  # Annualized, positive = bad
+                        else:
+                            port_risk = -var_threshold * np.sqrt(252)
+                    
+                    # Sharpe ratio (always using volatility)
+                    port_sharpe = (port_return - rf_rate) / port_volatility if port_volatility > 0 else 0
+                    
+                    portfolio_returns.append(port_return * 100)
+                    portfolio_risk_list.append(port_risk * 100)
+                    portfolio_volatilities.append(port_volatility * 100)
+                    portfolio_sharpes.append(port_sharpe)
+                    portfolio_weights.append(w)
+                
+                # ===== YOUR OPTIMIZED PORTFOLIOS =====
+                strategy_returns = []
+                strategy_risk = []
+                strategy_volatilities = []  # Always store volatility
+                strategy_names = []
+                strategy_sharpes = []
+                
+                for p_name, p in analyzer.portfolios.items():
+                    strat_return = p['annualized_return'] * 100
+                    strat_volatility = p['annualized_volatility'] * 100
+                    strat_sharpe = p['sharpe_ratio']
+                    
+                    strategy_returns.append(strat_return)
+                    strategy_volatilities.append(strat_volatility)
+                    strategy_names.append(p['name'])
+                    strategy_sharpes.append(strat_sharpe)
+                    
+                    # Risk metric based on frontier type
+                    if frontier_type == "📊 Mean-Variance (Traditional)":
+                        strat_risk = strat_volatility
+                    else:
+                        # Calculate CVaR for this portfolio
+                        port_daily_returns = p['returns'].values
+                        var_threshold = np.percentile(port_daily_returns, 100 * (1 - cvar_alpha))
+                        tail = port_daily_returns[port_daily_returns <= var_threshold]
+                        if len(tail) > 0:
+                            strat_cvar = -tail.mean() * np.sqrt(252) * 100  # Annualized %
+                        else:
+                            strat_cvar = -var_threshold * np.sqrt(252) * 100
+                        strat_risk = strat_cvar
+                    
+                    strategy_risk.append(strat_risk)
+                
+                # ===== CREATE CHART =====
+                fig = go.Figure()
+                
+                # Labels based on frontier type
+                if frontier_type == "📊 Mean-Variance (Traditional)":
+                    risk_label = "Annualized Volatility (Standard Deviation) %"
+                    cloud_color = 'rgba(255, 107, 107, 0.4)'
+                else:
+                    risk_label = f"Annualized CVaR{int(cvar_alpha*100)} (Tail Risk) %"
+                    cloud_color = 'rgba(147, 112, 219, 0.4)'
+                
+                # 1. Random portfolios (cloud)
+                fig.add_trace(go.Scatter(
+                    x=portfolio_risk_list,
+                    y=portfolio_returns,
+                    mode='markers',
+                    name=f'Random Portfolios ({n_portfolios:,})',
+                    marker=dict(
+                        size=3,
+                        color=cloud_color,
+                        symbol='circle'
+                    ),
+                    hovertemplate=f'Return: %{{y:.2f}}%<br>{risk_label.split(" %")[0]}: %{{x:.2f}}%<extra></extra>'
+                ))
+                
+                # 2. Your optimized portfolios (colored markers)
+                portfolio_colors = ['#FFE66D', '#A855F7', '#6366F1', '#FF9F43', '#EC4899', '#10B981', '#F59E0B']
+                portfolio_symbols = ['star', 'diamond', 'hexagon', 'pentagon', 'circle', 'square', 'triangle-up']
+                
+                for i, (x_val, y_val, name, sharpe) in enumerate(zip(strategy_risk, strategy_returns, strategy_names, strategy_sharpes)):
+                    fig.add_trace(go.Scatter(
+                        x=[x_val],
+                        y=[y_val],
+                        mode='markers',
+                        name=name,
+                        marker=dict(
+                            size=18,
+                            color=portfolio_colors[i % len(portfolio_colors)],
+                            symbol=portfolio_symbols[i % len(portfolio_symbols)],
+                            line=dict(width=2, color='white')
+                        ),
+                        hovertemplate=f'<b>{name}</b><br>Return: %{{y:.2f}}%<br>{risk_label.split(" %")[0]}: %{{x:.2f}}%<br>Sharpe: {sharpe:.3f}<extra></extra>'
+                    ))
+                
+                # Layout
+                fig.update_layout(
+                    height=650,
+                    xaxis_title=risk_label,
+                    yaxis_title="Annualized Return %",
+                    legend=dict(
+                        orientation="v",
+                        yanchor="top",
+                        y=0.99,
+                        xanchor="left",
+                        x=1.02,
+                        bgcolor='rgba(26,26,36,0.95)',
+                        bordercolor='rgba(99,102,241,0.5)',
+                        borderwidth=1,
+                        font=dict(size=10)
+                    ),
+                    hovermode='closest',
+                    margin=dict(r=200)
+                )
+                
+                fig = apply_plotly_theme(fig)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # ===== QUICK STATS =====
+                st.markdown("---")
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("🎲 Simulated Portfolios", f"{n_portfolios:,}")
+                with col2:
+                    best_sharpe_idx = np.argmax(portfolio_sharpes)
+                    st.metric("⭐ Best Random Sharpe", f"{portfolio_sharpes[best_sharpe_idx]:.3f}")
+                with col3:
+                    min_risk_idx = np.argmin(portfolio_risk_list)
+                    risk_type = "Volatility" if frontier_type == "📊 Mean-Variance (Traditional)" else "CVaR"
+                    st.metric(f"📉 Min {risk_type}", f"{portfolio_risk_list[min_risk_idx]:.2f}%")
+                with col4:
+                    max_ret_idx = np.argmax(portfolio_returns)
+                    st.metric("📈 Max Return Found", f"{portfolio_returns[max_ret_idx]:.2f}%")
+                
+                # ===== WHY SOME STRATEGIES ARE INSIDE THE CLOUD =====
+                st.markdown("---")
+        
+                with st.expander("📚 Why Are Some Strategies Inside the Cloud?", expanded=False):
+                    st.markdown("""
+                    You might wonder: *"If I optimized these portfolios, why aren't they all on the efficient frontier?"*
+                    
+                    This is one of the most important insights in modern portfolio theory.
+                    
+                    ---
+                    
+                    ### The Efficient Frontier is "Optimal" Only in Hindsight
+                    
+                    The frontier you see is calculated using **historical data**. It shows the best you 
+                    *could have done* if you had known the future perfectly. But when these strategies 
+                    were "optimized," they only had access to past data—just like in real investing.
+                    
+                    ---
+                    
+                    ### The Problem: Estimation Error
+                    
+                    Markowitz optimization requires estimating **expected returns** and **covariances**. 
+                    These estimates are extremely noisy:
+                    
+                    > Merton (1980) showed that estimating expected returns with the same precision as 
+                    > volatility would require **~500 years of data**.
+                    
+                    Worse, mean-variance optimization **amplifies these errors**—it overweights assets 
+                    with overestimated returns and underweights those with underestimated returns.
+                    
+                    > Michaud (1989) called this phenomenon **"error maximization."**
+                    
+                    ---
+                    
+                    ### The Surprising Truth: Simple Often Beats "Optimal"
+                    
+                    In a landmark study, **DeMiguel, Garlappi & Uppal (2009)** compared 14 optimization 
+                    strategies against the naive 1/N (Equal Weight) portfolio across 7 datasets.
+                    
+                    **Result:** No optimized strategy consistently beat Equal Weight out-of-sample!
+                    
+                    They estimated that **~250 years of data** would be needed for mean-variance 
+                    optimization to reliably outperform 1/N.
+                    
+                    ---
+                    
+                    ### An Additional Problem: Volatility (Standard Deviation) Isn't "Risk"
+                    
+                    The entire framework assumes returns are **normally distributed**. In reality, 
+                    financial returns exhibit:
+                    
+                    - **Fat tails**: Extreme events happen far more often than the normal distribution predicts
+                    - **Skewness**: Crashes are sharper than rallies
+                    - **Volatility clustering**: Calm and turbulent periods cluster together
+                    
+                    > Mandelbrot (1963) and Cont (2001) documented these "stylized facts" that violate 
+                    > the normality assumption underlying mean-variance optimization.
+                    
+                    Volatility also **penalizes gains equally with losses**—but investors don't mind 
+                    upside volatility! This is why metrics like **Sortino** and **CVaR** are often 
+                    more meaningful than Sharpe.
+                    
+                    ---
+                    
+                    ### For Mean-CVaR Specifically
+                    
+                    The same estimation issues apply to CVaR, with an additional challenge: CVaR is 
+                    estimated from only the **worst α% of observations**. With 1000 days of data and 
+                    α=0.95, that's only ~50 data points for CVaR estimation—leading to high estimation error!
+                    
+                    ---
+                    
+                    ### The Bottom Line
+                    
+                    > **The efficient frontier shows the best you could have done with perfect foresight. 
+                    > Strategies like Equal Weight, Risk Parity, and HRP accept being "suboptimal" 
+                    > in-sample to be more robust when the future is uncertain—which is always.**
+                    
+                    ---
+                    
+                    #### 📖 Key References
+                    
+                    - Markowitz, H. (1952). "Portfolio Selection." *Journal of Finance*
+                    - Merton, R.C. (1980). "On Estimating the Expected Return on the Market." *JFE*
+                    - Michaud, R.O. (1989). "The Markowitz Optimization Enigma." *FAJ*
+                    - DeMiguel, V. et al. (2009). "Optimal Versus Naive Diversification." *RFS*
+                    - López de Prado, M. (2016). "Building Diversified Portfolios that Outperform Out-of-Sample." *JPM*
+                    - Mandelbrot, B. (1963). "The Variation of Certain Speculative Prices." *Journal of Business*
+                    - Cont, R. (2001). "Empirical Properties of Asset Returns." *Quantitative Finance*
+                    """)
+                
+                st.markdown("---")
+                
+                # ================================================================
+                # FRONTIER EXPLORER
+                # ================================================================
+                st.markdown("#### 🔍 Explore the Frontier")
+                
+                st.markdown("""
+                Use the slider below to explore portfolios along the efficient frontier. 
+                Select different risk levels and compare with your optimized strategies.
+                """)
+                
+                # Find approximate frontier by bucketing risk and finding max return
+                n_buckets = 50
+                risk_min, risk_max = min(portfolio_risk_list), max(portfolio_risk_list)
+                bucket_size = (risk_max - risk_min) / n_buckets
+                
+                frontier_points = []
+                for i in range(n_buckets):
+                    bucket_start = risk_min + i * bucket_size
+                    bucket_end = bucket_start + bucket_size
+                    
+                    bucket_indices = [
+                        j for j, v in enumerate(portfolio_risk_list) 
+                        if bucket_start <= v < bucket_end
+                    ]
+                    
+                    if bucket_indices:
+                        best_idx = max(bucket_indices, key=lambda j: portfolio_returns[j])
+                        frontier_points.append({
+                            'risk': portfolio_risk_list[best_idx],
+                            'return': portfolio_returns[best_idx],
+                            'volatility': portfolio_volatilities[best_idx],  # Always store volatility
+                            'sharpe': portfolio_sharpes[best_idx],
+                            'weights': portfolio_weights[best_idx]
                         })
                 
-                if weights_data:
-                    weights_df = pd.DataFrame(weights_data).sort_values('Weight', ascending=False)
+                if frontier_points:
+                    # Controls row
+                    ctrl_col1, ctrl_col2 = st.columns([2, 1])
                     
-                    # Dynamic y-axis range based on data
-                    max_weight = weights_df['Weight'].max()
-                    min_weight = weights_df['Weight'].min()
-                    y_max = max(max_weight * 1.15, 10)
-                    y_min = min(min_weight * 1.15, 0) if min_weight < 0 else 0
+                    with ctrl_col1:
+                        frontier_position = st.slider(
+                            "Risk Level (0% = Min Risk, 100% = Max Risk)",
+                            min_value=0,
+                            max_value=100,
+                            value=30,
+                            step=5,
+                            key="frontier_slider"
+                        )
                     
-                    colors = ['#4ECDC4' if w >= 0 else '#FF6B6B' for w in weights_df['Weight']]
+                    with ctrl_col2:
+                        compare_strategy = st.selectbox(
+                            "Compare with strategy",
+                            options=list(analyzer.portfolios.keys()),
+                            format_func=lambda x: analyzer.portfolios[x]['name'],
+                            key="compare_strategy"
+                        )
                     
-                    fig_w = go.Figure(data=[go.Bar(
-                        x=weights_df['Asset'],
-                        y=weights_df['Weight'],
-                        marker_color=colors,
-                        text=[f"{w:.1f}%" for w in weights_df['Weight']],
-                        textposition='outside',
-                        textfont=dict(color='#E2E8F0', size=10)
-                    )])
+                    frontier_idx = int((frontier_position / 100) * (len(frontier_points) - 1))
+                    selected = frontier_points[frontier_idx]
                     
-                    fig_w.update_layout(
-                        height=280,
-                        yaxis_title="Weight (%)",
-                        yaxis=dict(range=[y_min, y_max]),
-                        xaxis_title="",
-                        showlegend=False,
-                        margin=dict(t=20, b=30, l=50, r=20)
+                    # ===== METRICS AND WEIGHTS =====
+                    col1, col2 = st.columns([1, 1.5])
+                    
+                    with col1:
+                        st.markdown("##### 📊 Selected Frontier Portfolio")
+                        
+                        # Risk profile indicator
+                        if frontier_position < 25:
+                            risk_profile = "🛡️ Conservative"
+                            risk_color = "#4ECDC4"
+                        elif frontier_position < 50:
+                            risk_profile = "⚖️ Moderate"
+                            risk_color = "#FFE66D"
+                        elif frontier_position < 75:
+                            risk_profile = "📈 Growth"
+                            risk_color = "#FF9F43"
+                        else:
+                            risk_profile = "🚀 Aggressive"
+                            risk_color = "#FF6B6B"
+                        
+                        st.markdown(f"**Profile:** <span style='color:{risk_color}; font-size:1.1em;'>{risk_profile}</span>", unsafe_allow_html=True)
+                        
+                        mcols = st.columns(2)
+                        mcols[0].metric("Return", f"{selected['return']:.2f}%")
+                        mcols[1].metric("Volatility", f"{selected['volatility']:.2f}%")
+                        
+                        mcols2 = st.columns(2)
+                        mcols2[0].metric("Sharpe", f"{selected['sharpe']:.3f}")
+                        mcols2[1].metric("Risk Level", f"{frontier_position}%")
+                    
+                    with col2:
+                        st.markdown("##### ⚖️ Asset Allocation")
+                        
+                        weights_data = []
+                        for ticker, weight in zip(analyzer.symbols, selected['weights']):
+                            if abs(weight) > 0.01:
+                                weights_data.append({
+                                    'Asset': get_display_name(ticker),
+                                    'Ticker': ticker,
+                                    'Weight': weight * 100
+                                })
+                        
+                        if weights_data:
+                            weights_df = pd.DataFrame(weights_data).sort_values('Weight', ascending=False)
+                            
+                            # Dynamic y-axis range based on data
+                            max_weight = weights_df['Weight'].max()
+                            min_weight = weights_df['Weight'].min()
+                            y_max = max(max_weight * 1.15, 10)
+                            y_min = min(min_weight * 1.15, 0) if min_weight < 0 else 0
+                            
+                            colors = ['#4ECDC4' if w >= 0 else '#FF6B6B' for w in weights_df['Weight']]
+                            
+                            fig_w = go.Figure(data=[go.Bar(
+                                x=weights_df['Asset'],
+                                y=weights_df['Weight'],
+                                marker_color=colors,
+                                text=[f"{w:.1f}%" for w in weights_df['Weight']],
+                                textposition='outside',
+                                textfont=dict(color='#E2E8F0', size=10)
+                            )])
+                            
+                            fig_w.update_layout(
+                                height=280,
+                                yaxis_title="Weight (%)",
+                                yaxis=dict(range=[y_min, y_max]),
+                                xaxis_title="",
+                                showlegend=False,
+                                margin=dict(t=20, b=30, l=50, r=20)
+                            )
+                            fig_w.add_hline(y=0, line_color="rgba(255,255,255,0.3)")
+                            fig_w = apply_plotly_theme(fig_w)
+                            st.plotly_chart(fig_w, use_container_width=True)
+                    
+                    st.markdown("---")
+                    
+                    # ================================================================
+                    # HISTORICAL PERFORMANCE COMPARISON
+                    # ================================================================
+                    st.markdown("##### 📈 Historical Performance Comparison")
+                    
+                    st.markdown(f"""
+                    Compare the **selected frontier portfolio** (risk level {frontier_position}%) 
+                    with **{analyzer.portfolios[compare_strategy]['name']}** over the analysis period.
+                    """)
+                    
+                    # Calculate cumulative returns for frontier portfolio
+                    frontier_weights = selected['weights']
+                    frontier_daily_returns = returns_aligned.dot(frontier_weights)
+                    frontier_cumulative = (1 + frontier_daily_returns).cumprod() * 100
+                    
+                    # Get comparison strategy cumulative returns
+                    compare_portfolio = analyzer.portfolios[compare_strategy]
+                    compare_cumulative = (1 + compare_portfolio['returns']).cumprod() * 100
+                    
+                    # Create performance chart
+                    fig_perf = go.Figure()
+                    
+                    # Frontier portfolio
+                    fig_perf.add_trace(go.Scatter(
+                        x=frontier_cumulative.index,
+                        y=frontier_cumulative.values,
+                        mode='lines',
+                        name=f'Frontier Portfolio ({frontier_position}% risk)',
+                        line=dict(color=risk_color, width=2.5),
+                        hovertemplate='<b>Frontier Portfolio</b><br>Date: %{x}<br>Value: %{y:.2f}<extra></extra>'
+                    ))
+                    
+                    # Comparison strategy
+                    strategy_color = portfolio_colors[list(analyzer.portfolios.keys()).index(compare_strategy) % len(portfolio_colors)]
+                    fig_perf.add_trace(go.Scatter(
+                        x=compare_cumulative.index,
+                        y=compare_cumulative.values,
+                        mode='lines',
+                        name=compare_portfolio['name'],
+                        line=dict(color=strategy_color, width=2.5, dash='dash'),
+                        hovertemplate=f'<b>{compare_portfolio["name"]}</b><br>Date: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>'
+                    ))
+                    
+                    # Base line
+                    fig_perf.add_hline(y=100, line_dash="dot", line_color="rgba(255,255,255,0.3)",
+                                    annotation_text="Initial Investment", annotation_position="right")
+                    
+                    fig_perf.update_layout(
+                        height=400,
+                        xaxis_title="Date",
+                        yaxis_title="Portfolio Value (Base 100)",
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="center",
+                            x=0.5
+                        ),
+                        hovermode='x unified'
                     )
-                    fig_w.add_hline(y=0, line_color="rgba(255,255,255,0.3)")
-                    fig_w = apply_plotly_theme(fig_w)
-                    st.plotly_chart(fig_w, use_container_width=True)
-            
-            st.markdown("---")
-            
-            # ================================================================
-            # HISTORICAL PERFORMANCE COMPARISON
-            # ================================================================
-            st.markdown("##### 📈 Historical Performance Comparison")
-            
-            st.markdown(f"""
-            Compare the **selected frontier portfolio** (risk level {frontier_position}%) 
-            with **{analyzer.portfolios[compare_strategy]['name']}** over the analysis period.
-            """)
-            
-            # Calculate cumulative returns for frontier portfolio
-            frontier_weights = selected['weights']
-            frontier_daily_returns = returns_aligned.dot(frontier_weights)
-            frontier_cumulative = (1 + frontier_daily_returns).cumprod() * 100
-            
-            # Get comparison strategy cumulative returns
-            compare_portfolio = analyzer.portfolios[compare_strategy]
-            compare_cumulative = (1 + compare_portfolio['returns']).cumprod() * 100
-            
-            # Create performance chart
-            fig_perf = go.Figure()
-            
-            # Frontier portfolio
-            fig_perf.add_trace(go.Scatter(
-                x=frontier_cumulative.index,
-                y=frontier_cumulative.values,
-                mode='lines',
-                name=f'Frontier Portfolio ({frontier_position}% risk)',
-                line=dict(color=risk_color, width=2.5),
-                hovertemplate='<b>Frontier Portfolio</b><br>Date: %{x}<br>Value: %{y:.2f}<extra></extra>'
-            ))
-            
-            # Comparison strategy
-            strategy_color = portfolio_colors[list(analyzer.portfolios.keys()).index(compare_strategy) % len(portfolio_colors)]
-            fig_perf.add_trace(go.Scatter(
-                x=compare_cumulative.index,
-                y=compare_cumulative.values,
-                mode='lines',
-                name=compare_portfolio['name'],
-                line=dict(color=strategy_color, width=2.5, dash='dash'),
-                hovertemplate=f'<b>{compare_portfolio["name"]}</b><br>Date: %{{x}}<br>Value: %{{y:.2f}}<extra></extra>'
-            ))
-            
-            # Base line
-            fig_perf.add_hline(y=100, line_dash="dot", line_color="rgba(255,255,255,0.3)",
-                            annotation_text="Initial Investment", annotation_position="right")
-            
-            fig_perf.update_layout(
-                height=400,
-                xaxis_title="Date",
-                yaxis_title="Portfolio Value (Base 100)",
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.02,
-                    xanchor="center",
-                    x=0.5
-                ),
-                hovermode='x unified'
-            )
-            
-            fig_perf = apply_plotly_theme(fig_perf)
-            st.plotly_chart(fig_perf, use_container_width=True)
-            
-            # Performance comparison metrics
-            st.markdown("##### 📊 Performance Summary")
-            
-            # Calculate metrics for frontier portfolio
-            frontier_ann_return = frontier_daily_returns.mean() * 252
-            frontier_ann_vol = frontier_daily_returns.std() * np.sqrt(252)
-            frontier_sharpe_calc = (frontier_ann_return - rf_rate) / frontier_ann_vol if frontier_ann_vol > 0 else 0
-            frontier_cum_return = (frontier_cumulative.iloc[-1] / 100) - 1
-            
-            # Drawdown for frontier
-            frontier_rolling_max = frontier_cumulative.expanding().max()
-            frontier_drawdown = (frontier_cumulative - frontier_rolling_max) / frontier_rolling_max
-            frontier_max_dd = frontier_drawdown.min()
-            
-            # Comparison metrics
-            compare_cum_return = compare_portfolio['cumulative_return']
-            compare_max_dd = compare_portfolio['max_drawdown']
-            
-            comparison_data = {
-                'Metric': ['Cumulative Return', 'Ann. Return', 'Ann. Volatility', 'Sharpe Ratio', 'Max Drawdown'],
-                f'Frontier ({frontier_position}%)': [
-                    f"{frontier_cum_return*100:.2f}%",
-                    f"{frontier_ann_return*100:.2f}%",
-                    f"{frontier_ann_vol*100:.2f}%",
-                    f"{frontier_sharpe_calc:.3f}",
-                    f"{frontier_max_dd*100:.2f}%"
-                ],
-                compare_portfolio['name']: [
-                    f"{compare_cum_return*100:.2f}%",
-                    f"{compare_portfolio['annualized_return']*100:.2f}%",
-                    f"{compare_portfolio['annualized_volatility']*100:.2f}%",
-                    f"{compare_portfolio['sharpe_ratio']:.3f}",
-                    f"{compare_max_dd*100:.2f}%"
-                ]
-            }
-            
-            comparison_df = pd.DataFrame(comparison_data)
-            st.markdown(
-                create_styled_table(comparison_df, "Side-by-Side Comparison"),
-                unsafe_allow_html=True
-            )
-            
-            # ================================================================
-            # QUICK INSIGHT
-            # ================================================================
-            frontier_better = frontier_sharpe_calc > compare_portfolio['sharpe_ratio']
-            sharpe_diff = frontier_sharpe_calc - compare_portfolio['sharpe_ratio']
-            
-            st.markdown("---")
-            
-            if frontier_better:
-                st.success(
-                    f"✅ **Frontier portfolio dominates on a risk-adjusted basis** "
-                    f"(Sharpe +{sharpe_diff:.3f} vs {compare_portfolio['sharpe_ratio']:.3f})."
-                )
-            else:
-                st.info(
-                    f"ℹ️ **{compare_portfolio['name']} remains superior on a risk-adjusted basis** "
-                    f"(Sharpe {compare_portfolio['sharpe_ratio']:.3f} vs {frontier_sharpe_calc:.3f})."
-                )
+                    
+                    fig_perf = apply_plotly_theme(fig_perf)
+                    st.plotly_chart(fig_perf, use_container_width=True)
+                    
+                    # Performance comparison metrics
+                    st.markdown("##### 📊 Performance Summary")
+                    
+                    # Calculate metrics for frontier portfolio
+                    frontier_ann_return = frontier_daily_returns.mean() * 252
+                    frontier_ann_vol = frontier_daily_returns.std() * np.sqrt(252)
+                    frontier_sharpe_calc = (frontier_ann_return - rf_rate) / frontier_ann_vol if frontier_ann_vol > 0 else 0
+                    frontier_cum_return = (frontier_cumulative.iloc[-1] / 100) - 1
+                    
+                    # Drawdown for frontier
+                    frontier_rolling_max = frontier_cumulative.expanding().max()
+                    frontier_drawdown = (frontier_cumulative - frontier_rolling_max) / frontier_rolling_max
+                    frontier_max_dd = frontier_drawdown.min()
+                    
+                    # Comparison metrics
+                    compare_cum_return = compare_portfolio['cumulative_return']
+                    compare_max_dd = compare_portfolio['max_drawdown']
+                    
+                    comparison_data = {
+                        'Metric': ['Cumulative Return', 'Ann. Return', 'Ann. Volatility', 'Sharpe Ratio', 'Max Drawdown'],
+                        f'Frontier ({frontier_position}%)': [
+                            f"{frontier_cum_return*100:.2f}%",
+                            f"{frontier_ann_return*100:.2f}%",
+                            f"{frontier_ann_vol*100:.2f}%",
+                            f"{frontier_sharpe_calc:.3f}",
+                            f"{frontier_max_dd*100:.2f}%"
+                        ],
+                        compare_portfolio['name']: [
+                            f"{compare_cum_return*100:.2f}%",
+                            f"{compare_portfolio['annualized_return']*100:.2f}%",
+                            f"{compare_portfolio['annualized_volatility']*100:.2f}%",
+                            f"{compare_portfolio['sharpe_ratio']:.3f}",
+                            f"{compare_max_dd*100:.2f}%"
+                        ]
+                    }
+                    
+                    comparison_df = pd.DataFrame(comparison_data)
+                    st.markdown(
+                        create_styled_table(comparison_df, "Side-by-Side Comparison"),
+                        unsafe_allow_html=True
+                    )
+                    
+                    # ================================================================
+                    # QUICK INSIGHT
+                    # ================================================================
+                    frontier_better = frontier_sharpe_calc > compare_portfolio['sharpe_ratio']
+                    sharpe_diff = frontier_sharpe_calc - compare_portfolio['sharpe_ratio']
+                    
+                    st.markdown("---")
+                    
+                    if frontier_better:
+                        st.success(
+                            f"✅ **Frontier portfolio dominates on a risk-adjusted basis** "
+                            f"(Sharpe +{sharpe_diff:.3f} vs {compare_portfolio['sharpe_ratio']:.3f})."
+                        )
+                    else:
+                        st.info(
+                            f"ℹ️ **{compare_portfolio['name']} remains superior on a risk-adjusted basis** "
+                            f"(Sharpe {compare_portfolio['sharpe_ratio']:.3f} vs {frontier_sharpe_calc:.3f})."
+                        )
         
         # TAB 7: BENCHMARK (if available)
         if tab8 is not None:
