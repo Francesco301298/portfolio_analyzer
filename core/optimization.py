@@ -547,3 +547,29 @@ def compute_portfolio_cvar(returns_df, weights, alpha=0.95):
     
     return link, analyzer.symbols, corr_matrix, distance_matrix
 
+def compute_portfolio_cvar_fast(returns_matrix, weights, alpha=0.95):
+    """
+    Fast CVaR computation for Monte Carlo simulation.
+    
+    Parameters
+    ----------
+    returns_matrix : np.ndarray
+        Historical returns (T x n)
+    weights : np.ndarray
+        Portfolio weights (n,)
+    alpha : float
+        Confidence level (default 0.95 = focus on worst 5%)
+        
+    Returns
+    -------
+    float
+        Portfolio CVaR (negative value = loss)
+    """
+    portfolio_returns = returns_matrix @ weights
+    var_threshold = np.percentile(portfolio_returns, 100 * (1 - alpha))
+    tail_returns = portfolio_returns[portfolio_returns <= var_threshold]
+    
+    if len(tail_returns) > 0:
+        return tail_returns.mean()
+    else:
+        return var_threshold
