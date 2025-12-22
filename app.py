@@ -1574,7 +1574,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         })
                     
                     comparison_df = pd.DataFrame(comparison_metrics)
-                    comparison_df = comparison_df.sort_values('CVaR Rank')  # Lower CVaR = better
+                    comparison_df = comparison_df.sort_values('CVaR Rank', ascending=False)  # Lower CVaR = better
                     comparison_df['#'] = range(1, len(comparison_df) + 1)
                     comparison_df = comparison_df.drop('CVaR Rank', axis=1)
                     comparison_df = comparison_df[['#', 'Strategy', 'Sharpe', 'Max DD', 'VaR (5%)', 'CVaR (5%)']]
