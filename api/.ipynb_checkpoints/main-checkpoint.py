@@ -6,6 +6,9 @@ This API exposes the portfolio analysis functionality as REST endpoints.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+# Import routes
+from api.routes.portfolio import router as portfolio_router
+
 # Create FastAPI app
 app = FastAPI(
     title="Portfolio Analyzer Pro API",
@@ -26,6 +29,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include routers
+app.include_router(portfolio_router)
+
 
 @app.get("/")
 async def root():
@@ -41,18 +47,3 @@ async def root():
 async def health_check():
     """Health check endpoint - useful for monitoring."""
     return {"status": "healthy"}
-
-
-@app.get("/api/info")
-async def api_info():
-    """Returns information about available endpoints."""
-    return {
-        "endpoints": {
-            "/": "API welcome message",
-            "/health": "Health check",
-            "/api/info": "This endpoint - lists available endpoints",
-            "/api/portfolio/analyze": "(Coming soon) Analyze portfolio",
-            "/api/portfolio/efficient-frontier": "(Coming soon) Generate efficient frontier",
-            "/api/backtest/cpcv": "(Coming soon) Run CPCV backtest"
-        }
-    }
