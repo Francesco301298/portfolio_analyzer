@@ -5293,9 +5293,9 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         var_threshold = np.percentile(daily_portfolio_returns, 100 * (1 - cvar_alpha))
                         tail_returns = daily_portfolio_returns[daily_portfolio_returns <= var_threshold]
                         if len(tail_returns) > 0:
-                            port_risk = -tail_returns.mean()  # Annualized, positive = bad
+                            port_risk = -tail_returns.mean()  # Daily CVaR (positive = tail loss)
                         else:
-                            port_risk = -var_threshold * np.sqrt(252)
+                            port_risk = -var_threshold
                     
                     # Sharpe ratio (always using volatility)
                     port_sharpe = (port_return - rf_rate) / port_volatility if port_volatility > 0 else 0
@@ -5334,7 +5334,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         if len(tail) > 0:
                             strat_cvar = -tail.mean() * 100  # Daily CVaR %
                         else:
-                            strat_cvar = -var_threshold * np.sqrt(252) * 100
+                            strat_cvar = -var_threshold * 100
                         strat_risk = strat_cvar
                     
                     strategy_risk.append(strat_risk)
