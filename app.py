@@ -5293,7 +5293,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         var_threshold = np.percentile(daily_portfolio_returns, 100 * (1 - cvar_alpha))
                         tail_returns = daily_portfolio_returns[daily_portfolio_returns <= var_threshold]
                         if len(tail_returns) > 0:
-                            port_risk = -tail_returns.mean() * np.sqrt(252)  # Annualized, positive = bad
+                            port_risk = -tail_returns.mean()  # Annualized, positive = bad
                         else:
                             port_risk = -var_threshold * np.sqrt(252)
                     
@@ -5332,7 +5332,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         var_threshold = np.percentile(port_daily_returns, 100 * (1 - cvar_alpha))
                         tail = port_daily_returns[port_daily_returns <= var_threshold]
                         if len(tail) > 0:
-                            strat_cvar = -tail.mean() * np.sqrt(252) * 100  # Annualized %
+                            strat_cvar = -tail.mean() * 100  # Daily CVaR %
                         else:
                             strat_cvar = -var_threshold * np.sqrt(252) * 100
                         strat_risk = strat_cvar
@@ -5347,7 +5347,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     risk_label = "Annualized Volatility (Standard Deviation) %"
                     cloud_color = 'rgba(255, 107, 107, 0.4)'
                 else:
-                    risk_label = f"Annualized CVaR{int(cvar_alpha*100)} (Tail Risk) %"
+                    risk_label = f"Daily CVaR{int(cvar_alpha*100)} (Tail Loss) %"
                     cloud_color = 'rgba(147, 112, 219, 0.4)'
                 
                 # 1. Random portfolios (cloud)
