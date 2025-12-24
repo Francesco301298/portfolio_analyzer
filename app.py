@@ -4616,7 +4616,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             )
 
             # Build available methods list
-            available_cpcv_methods = ["Equally Weighted", "Minimum Volatility", "Maximum Sharpe", "Risk Parity","CVaR (95%)"]
+            available_cpcv_methods = ["Equally Weighted", "Minimum Volatility", "Maximum Sharpe", "Risk Parity","Hierarchical Risk Parity","CVaR (95%)","Your Portfolio"]
             if 'custom' in analyzer.portfolios:
                 available_cpcv_methods.append("Your Portfolio")
 
