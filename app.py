@@ -4638,12 +4638,19 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             }
 
             # Primary metric for PBO calculation
-            primary_metric = st.selectbox(
+            primary_metric_display = st.selectbox(
                 "Primary metric for PBO",
-                ["sharpe", "sortino", "calmar"],
+                ["Sharpe Ratio", "Sortino Ratio", "Calmar Ratio"],  # ✅ User-friendly names
                 index=1,
                 help="The metric used to calculate Probability of Backtest Overfitting"
             )
+
+            metric_key_map = {
+                "Sharpe Ratio": "sharpe",
+                "Sortino Ratio": "sortino",
+                "Calmar Ratio": "calmar"
+            }
+            primary_metric = metric_key_map[primary_metric_display]
 
             # ==========================
             # RUN BACKTEST
