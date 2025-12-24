@@ -67,6 +67,7 @@ def run_cpcv_backtest(
         "Maximum Sharpe": "max_sharpe",
         "Maximum Return": "max_return",
         "Risk Parity": "risk_parity",
+        "Hierarchical Risk Parity": "hrp",
         "CVaR (95%)": "cvar",
         "Your Portfolio": "custom"
     }
@@ -97,11 +98,16 @@ def run_cpcv_backtest(
                     result = cvar_optimization(train_returns, alpha=0.95)
                     weights = result['weights']
                 elif method_key == "custom":
-                    # Custom richiede gestione speciale - skip per ora
-                    nan_metrics = {k: np.nan for k in ['sharpe', 'sortino', 'calmar', 'max_drawdown', 'cvar_95', 'win_rate']}
-                    is_metrics_all[method].append(nan_metrics)
-                    oos_metrics_all[method].append(nan_metrics)
-                    continue
+                    # Per il custom portfolio, usa i pesi definiti dall'utente
+                    # (già calcolati e memorizzati in analyzer.portfolios['custom'])
+                    if 'custom' in analyzer.portfolios:
+                        weights = analyzer.portfolios['custom']['weights']
+                    else:
+                        # Fallback se custom non è disponibile
+                        nan_metrics = {k: np.nan for k in ['sharpe', 'sortino', 'calmar', 'max_drawdown', 'cvar_95', 'win_rate']}
+                        is_metrics_all[method].append(nan_metrics)
+                        oos_metrics_all[method].append(nan_metrics)
+                        continue
                 else:
                     weights = optimize_portfolio_weights(
                         train_returns,
