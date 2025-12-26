@@ -3354,7 +3354,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             st.warning("⚠️ Could not fit GARCH model to this data")
                     else:
                         st.info("ℹ️ Install `arch` package for GARCH analysis: `pip install arch`")
-        # ================================================================
+            # ================================================================
             # SECTION 2: PORTFOLIO CORRELATION DYNAMICS
             # ================================================================
             elif analysis_mode == "🔗 Portfolio Correlation Dynamics"
