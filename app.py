@@ -34,6 +34,8 @@ from core.statistics import fit_locdisp_mlfp
 from core.statistics import fit_dcc_t
 from core.statistics import compute_flexible_probabilities
 from core.statistics import extract_garch_residuals
+from core.statistics import fit_var1
+from core.statistics import cointegration_fp
 
 from core.rebalancing import calculate_portfolio_with_rebalancing
 from core.rebalancing import calculate_all_portfolios_with_costs
@@ -2827,7 +2829,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
             # Create two main sections
             analysis_mode = st.radio(
                 "Select Analysis Mode",
-                ["📈 Single Asset Analysis", "🔗 Portfolio Correlation Dynamics"],
+                ["📈 Single Asset Analysis", "🔗 Portfolio Correlation Dynamics", "🔄 Mean-Reversion & Dynamics"],
                 horizontal=True,
                 key="deepdive_mode"
             )
@@ -4024,7 +4026,1454 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         Use these insights alongside other risk management tools, not as the sole basis for decisions.
                         
                         📖 *Methodology: DCC-GARCH (Engle, 2002) with Flexible Probabilities (Meucci, 2010)*
-                        """)        
+                        """)  
+
+            # ================================================================
+            # SECTION 3: MEAN-REVERSION & DYNAMICS
+            # ================================================================
+            elif analysis_mode == "🔄 Mean-Reversion & Dynamics":
+                
+                st.markdown("""
+                ### Understanding Market Dynamics
+                
+                This section answers fundamental questions for active portfolio management:
+                
+                - **Do my assets mean-revert or follow trends?**
+                - **How fast do they revert?** (Can I trade it?)
+                - **Are there stable relationships between assets?** (Pairs trading opportunities)
+                - **Where will prices be in N days?** (Forecasting)
+                
+                We use **Vector Autoregression (VAR)** and **Ornstein-Uhlenbeck** models, 
+                which are the workhorses of quantitative finance for modeling mean-reversion.
+                """)
+                
+                with st.expander("📚 The Theory Behind This Analysis", expanded=False):
+                    st.markdown(r"""
+                    #### Ornstein-Uhlenbeck Process (Single Asset)
+                    
+                    The **Ornstein-Uhlenbeck (O-U) process** models mean-reverting behavior:
+                    
+                    $$dX_t = \theta(\mu - X_t)dt + \sigma dW_t$$
+                    
+                    Where:
+                    - $\theta$ = **speed of mean-reversion** (higher = faster reversion)
+                    - $\mu$ = **long-run mean** (equilibrium level)
+                    - $\sigma$ = **volatility** of the process
+                    
+                    **Key metric - Half-life:**
+                    $$\tau_{1/2} = \frac{\ln(2)}{\theta}$$
+                    
+                    This tells you how many days it takes for a deviation to halve.
+                    
+                    ---
+                    
+                    #### VAR(1) Model (Multiple Assets)
+                    
+                    The **Vector Autoregression** extends this to multiple assets:
+                    
+                    $$X_t = \mu + B(X_{t-1} - \mu) + \varepsilon_t$$
+                    
+                    Where:
+                    - $B$ = **transition matrix** (captures cross-asset dynamics)
+                    - $\mu$ = **long-run mean vector**
+                    - $\varepsilon_t$ = **innovations** with covariance $\Sigma$
+                    
+                    **Stability condition:** All eigenvalues of $B$ must have $|\lambda| < 1$
+                    
+                    **Connection to O-U:** For a single asset, $B = e^{-\theta}$, so $\theta = -\ln(B)$
+                    
+                    ---
+                    
+                    #### Cointegration
+                    
+                    Two assets are **cointegrated** if their linear combination is stationary 
+                    (mean-reverting) even if individually they are non-stationary.
+                    
+                    **Example:** SPY and IVV (both S&P 500 ETFs) are cointegrated. 
+                    Their spread mean-reverts even though each price trends upward.
+                    
+                    **Trading implication:** If you find cointegrated pairs, you can trade 
+                    the spread with a mean-reversion strategy.
+                    
+                    📖 *References:*
+                    - *Meucci, A. (2005). "Risk and Asset Allocation." Springer.*
+                    - *Hamilton, J.D. (1994). "Time Series Analysis." Princeton University Press.*
+                    - *Engle, R. & Granger, C. (1987). "Co-integration and Error Correction."*
+                    """)
+                
+                st.markdown("---")
+                
+                # ================================================================
+                # ASSET SELECTION
+                # ================================================================
+                st.markdown("#### 🎯 Select Assets for Analysis")
+                
+                available_assets = [(t, get_display_name(t)) for t in symbols]
+                
+                selected_mr_assets = st.multiselect(
+                    "Choose assets to analyze",
+                    options=[t[0] for t in available_assets],
+                    default=symbols[:min(3, len(symbols))],  # Default: first 3 assets
+                    format_func=lambda x: get_display_name(x),
+                    key="mr_assets",
+                    help="Select 1 asset for pure O-U analysis, 2+ for VAR and cointegration analysis"
+                )
+                
+                # Guidance based on selection
+                if len(selected_mr_assets) == 0:
+                    st.info("👆 Select at least 1 asset to begin the analysis.")
+                    
+                elif len(selected_mr_assets) == 1:
+                    st.info("""
+                    **Single Asset Mode:** You'll get Ornstein-Uhlenbeck analysis with:
+                    - Mean-reversion speed and half-life
+                    - Current Z-score (deviation from equilibrium)
+                    - Trading signals
+                    - Price forecasts
+                    """)
+                    
+                elif len(selected_mr_assets) == 2:
+                    st.info("""
+                    **Pairs Mode:** You'll get:
+                    - Individual O-U analysis for each asset
+                    - VAR(1) joint dynamics
+                    - **Cointegration test** (is the spread tradable?)
+                    - Spread analysis with trading signals
+                    """)
+                    
+                else:  # 3+ assets
+                    st.info(f"""
+                    **Multi-Asset Mode ({len(selected_mr_assets)} assets):** You'll get:
+                    - VAR(1) system dynamics
+                    - Stability analysis (eigenvalues)
+                    - **Cointegration detection** (which combinations mean-revert?)
+                    - Impulse response analysis
+                    """)
+                
+                if len(selected_mr_assets) >= 1:
+                    
+                    # Configuration
+                    with st.expander("⚙️ Model Settings", expanded=False):
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            use_log_prices = st.checkbox(
+                                "Use log-prices",
+                                value=True,
+                                help="Recommended for most assets. Log-prices have better statistical properties."
+                            )
+                        
+                        with col2:
+                            forecast_horizon = st.slider(
+                                "Forecast horizon (days)",
+                                min_value=5, max_value=60, value=20, step=5,
+                                help="How far ahead to forecast"
+                            )
+                        
+                        with col3:
+                            confidence_level = st.selectbox(
+                                "Confidence level",
+                                options=[0.90, 0.95, 0.99],
+                                index=1,
+                                format_func=lambda x: f"{x*100:.0f}%",
+                                help="For forecast intervals and trading signals"
+                            )
+                    
+                    if st.button("🚀 Run Analysis", use_container_width=True, key="run_mr"):
+                        
+                        with st.spinner("Fitting mean-reversion models..."):
+                            
+                            try:
+                                # Prepare data
+                                n_assets = len(selected_mr_assets)
+                                prices_df = analyzer.data[selected_mr_assets].dropna()
+                                
+                                if use_log_prices:
+                                    x = np.log(prices_df.values)
+                                else:
+                                    x = prices_df.values
+                                
+                                dates = prices_df.index
+                                t_bar = len(dates)
+                                
+                                # Uniform probabilities (can be extended to flexible probabilities)
+                                p = np.ones(t_bar) / t_bar
+                                
+                                # ============================================
+                                # FIT VAR(1) MODEL
+                                # ============================================                                
+                                b_hat, mu_eps_hat, sigma2_hat = fit_var1(x, p, nu=1e9)
+                                
+                                # Ensure proper shapes
+                                if n_assets == 1:
+                                    b_hat = np.array([[b_hat]])
+                                    sigma2_hat = np.array([[sigma2_hat]])
+                                    mu_eps_hat = np.array([mu_eps_hat])
+                                else:
+                                    b_hat = np.atleast_2d(b_hat)
+                                    sigma2_hat = np.atleast_2d(sigma2_hat)
+                                    mu_eps_hat = np.atleast_1d(mu_eps_hat)
+                                
+                                # Compute long-run mean
+                                # From X_t = mu_eps + B @ X_{t-1}, stationary mean is:
+                                # mu = (I - B)^{-1} @ mu_eps
+                                try:
+                                    mu_longrun = np.linalg.solve(np.eye(n_assets) - b_hat, mu_eps_hat)
+                                except np.linalg.LinAlgError:
+                                    mu_longrun = np.mean(x, axis=0)
+                                
+                                # Eigenvalue analysis for stability
+                                eigenvalues = np.linalg.eigvals(b_hat)
+                                max_eigenvalue = np.max(np.abs(eigenvalues))
+                                is_stable = max_eigenvalue < 1
+                                
+                                # Compute half-lives from eigenvalues
+                                half_lives = []
+                                for ev in eigenvalues:
+                                    if np.abs(ev) < 1 and np.abs(ev) > 0.01:
+                                        hl = np.log(2) / (-np.log(np.abs(ev)))
+                                        half_lives.append(hl)
+                                    else:
+                                        half_lives.append(np.inf)
+                                
+                                # Cointegration analysis (for 2+ assets)
+                                c_hat, beta_hat = None, None
+                                if n_assets >= 2:
+                                    c_hat, beta_hat = cointegration_fp(x, p, b_threshold=0.99)
+                                
+                                # Store results
+                                st.session_state.mr_results = {
+                                    'b_hat': b_hat,
+                                    'mu_eps_hat': mu_eps_hat,
+                                    'sigma2_hat': sigma2_hat,
+                                    'mu_longrun': mu_longrun,
+                                    'eigenvalues': eigenvalues,
+                                    'half_lives': half_lives,
+                                    'is_stable': is_stable,
+                                    'c_hat': c_hat,
+                                    'beta_hat': beta_hat,
+                                    'x': x,
+                                    'dates': dates,
+                                    'assets': selected_mr_assets,
+                                    'prices_df': prices_df,
+                                    'use_log': use_log_prices,
+                                    'forecast_horizon': forecast_horizon,
+                                    'confidence_level': confidence_level
+                                }
+                                
+                                st.success("✅ Analysis complete!")
+                                
+                            except Exception as e:
+                                st.error(f"❌ Analysis failed: {str(e)}")
+                                import traceback
+                                st.code(traceback.format_exc())
+                                st.session_state.mr_results = None
+
+                    # ================================================================
+                    # DISPLAY RESULTS
+                    # ================================================================
+                    if 'mr_results' in st.session_state and st.session_state.mr_results is not None:
+                        
+                        mr = st.session_state.mr_results
+                        n_assets = len(mr['assets'])
+                        x = mr['x']
+                        dates = mr['dates']
+                        b_hat = mr['b_hat']
+                        mu_longrun = mr['mu_longrun']
+                        sigma2_hat = mr['sigma2_hat']
+                        eigenvalues = mr['eigenvalues']
+                        half_lives = mr['half_lives']
+                        prices_df = mr['prices_df']
+                        use_log = mr['use_log']
+                        forecast_horizon = mr['forecast_horizon']
+                        confidence_level = mr['confidence_level']
+                        
+                        st.markdown("---")
+                        
+                        # ============================================================
+                        # QUICK SUMMARY - KPI CARDS
+                        # ============================================================
+                        st.markdown("## 🎯 Quick Summary")
+                        
+                        # Current values and deviations
+                        x_current = x[-1, :]
+                        deviations = x_current - mu_longrun
+                        
+                        # Compute conditional standard deviations
+                        # For stationary VAR(1), unconditional variance is solution to:
+                        # Sigma = B @ Sigma @ B' + Sigma_eps
+                        # We use a simpler approximation: sigma_i = sqrt(sigma2_hat[i,i] / (1 - b_ii^2))
+                        try:
+                            sigma_unconditional = np.sqrt(np.diag(sigma2_hat) / (1 - np.diag(b_hat)**2))
+                        except:
+                            sigma_unconditional = np.sqrt(np.diag(sigma2_hat))
+                        
+                        z_scores = deviations / sigma_unconditional
+                        
+                        # Primary half-life (fastest mean-reversion)
+                        valid_half_lives = [hl for hl in half_lives if hl != np.inf and hl > 0]
+                        primary_half_life = min(valid_half_lives) if valid_half_lives else np.inf
+                        
+                        # KPI Cards
+                        if n_assets == 1:
+                            # Single asset layout
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            asset_name = get_display_name(mr['assets'][0])
+                            
+                            with col1:
+                                st.metric(
+                                    "Mean-Reversion Speed",
+                                    f"{-np.log(np.abs(b_hat[0,0])):.4f}" if np.abs(b_hat[0,0]) < 1 else "N/A",
+                                    help="θ parameter: higher = faster reversion"
+                                )
+                            
+                            with col2:
+                                if primary_half_life != np.inf:
+                                    st.metric(
+                                        "Half-Life",
+                                        f"{primary_half_life:.1f} days",
+                                        help="Time for deviation to halve"
+                                    )
+                                else:
+                                    st.metric("Half-Life", "∞ (Random Walk)")
+                            
+                            with col3:
+                                z = z_scores[0]
+                                st.metric(
+                                    "Current Z-Score",
+                                    f"{z:+.2f}σ",
+                                    delta="Overbought" if z > 1.5 else "Oversold" if z < -1.5 else "Neutral",
+                                    delta_color="inverse" if abs(z) > 1.5 else "off"
+                                )
+                            
+                            with col4:
+                                if use_log:
+                                    equilibrium_price = np.exp(mu_longrun[0])
+                                    current_price = np.exp(x_current[0])
+                                else:
+                                    equilibrium_price = mu_longrun[0]
+                                    current_price = x_current[0]
+                                
+                                pct_from_eq = (current_price / equilibrium_price - 1) * 100
+                                st.metric(
+                                    "Distance from Equilibrium",
+                                    f"{pct_from_eq:+.2f}%",
+                                    help=f"Equilibrium price: ${equilibrium_price:.2f}"
+                                )
+                        
+                        else:
+                            # Multi-asset layout
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                st.metric(
+                                    "System Stability",
+                                    "✅ Stable" if mr['is_stable'] else "⚠️ Unstable",
+                                    f"λ_max = {np.max(np.abs(eigenvalues)):.3f}"
+                                )
+                            
+                            with col2:
+                                if primary_half_life != np.inf:
+                                    st.metric(
+                                        "Fastest Half-Life",
+                                        f"{primary_half_life:.1f} days",
+                                        help="Fastest mean-reverting direction"
+                                    )
+                                else:
+                                    st.metric("Fastest Half-Life", "∞")
+                            
+                            with col3:
+                                n_coint = mr['c_hat'].shape[1] if mr['c_hat'] is not None and len(mr['c_hat'].shape) > 1 else 0
+                                st.metric(
+                                    "Cointegration Relations",
+                                    f"{n_coint} found",
+                                    "Tradable spreads!" if n_coint > 0 else "No stable spreads"
+                                )
+                            
+                            with col4:
+                                max_z = np.max(np.abs(z_scores))
+                                max_z_idx = np.argmax(np.abs(z_scores))
+                                max_z_asset = get_display_name(mr['assets'][max_z_idx])
+                                st.metric(
+                                    "Largest Deviation",
+                                    f"{z_scores[max_z_idx]:+.2f}σ",
+                                    f"{max_z_asset}"
+                                )
+                        
+                        st.markdown("---")
+                        
+                        # ============================================================
+                        # SECTION 1: ORNSTEIN-UHLENBECK ANALYSIS (PER ASSET)
+                        # ============================================================
+                        st.markdown("## 📊 Ornstein-Uhlenbeck Analysis")
+                        
+                        st.markdown("""
+                        For each asset, we estimate the O-U parameters and assess whether mean-reversion 
+                        is **strong enough to be tradable**.
+                        
+                        **Rule of thumb for tradability:**
+                        - Half-life < 20 days → Excellent for mean-reversion trading
+                        - Half-life 20-60 days → Moderate opportunity, slower trades
+                        - Half-life > 60 days → Too slow, essentially a random walk for trading purposes
+                        """)
+                        
+                        # Create tabs for each asset if multiple
+                        if n_assets > 1:
+                            asset_tabs = st.tabs([f"📈 {get_display_name(a)}" for a in mr['assets']])
+                        else:
+                            asset_tabs = [st.container()]
+                        
+                        for i, (asset_tab, asset) in enumerate(zip(asset_tabs, mr['assets'])):
+                            with asset_tab:
+                                
+                                asset_name = get_display_name(asset)
+                                x_i = x[:, i]
+                                
+                                # Extract O-U parameters for this asset
+                                b_i = b_hat[i, i] if n_assets > 1 else b_hat[0, 0]
+                                mu_i = mu_longrun[i]
+                                sigma_eps_i = np.sqrt(sigma2_hat[i, i]) if n_assets > 1 else np.sqrt(sigma2_hat[0, 0])
+                                
+                                # O-U parameters
+                                if np.abs(b_i) < 1:
+                                    theta_i = -np.log(np.abs(b_i))  # Mean-reversion speed
+                                    half_life_i = np.log(2) / theta_i
+                                    # Unconditional volatility
+                                    sigma_unconditional_i = sigma_eps_i / np.sqrt(1 - b_i**2)
+                                else:
+                                    theta_i = 0
+                                    half_life_i = np.inf
+                                    sigma_unconditional_i = sigma_eps_i * np.sqrt(len(x_i))
+                                
+                                # Current state
+                                x_current_i = x_i[-1]
+                                z_score_i = (x_current_i - mu_i) / sigma_unconditional_i if sigma_unconditional_i > 0 else 0
+                                
+                                # Layout
+                                col1, col2 = st.columns([1.5, 1])
+                                
+                                with col1:
+                                    # Price chart with equilibrium level
+                                    st.markdown(f"##### {asset_name}: Price vs Equilibrium")
+                                    
+                                    fig = go.Figure()
+                                    
+                                    # Price series
+                                    if use_log:
+                                        price_series = np.exp(x_i)
+                                        eq_price = np.exp(mu_i)
+                                        upper_band = np.exp(mu_i + 2 * sigma_unconditional_i)
+                                        lower_band = np.exp(mu_i - 2 * sigma_unconditional_i)
+                                    else:
+                                        price_series = x_i
+                                        eq_price = mu_i
+                                        upper_band = mu_i + 2 * sigma_unconditional_i
+                                        lower_band = mu_i - 2 * sigma_unconditional_i
+                                    
+                                    # ±2σ bands
+                                    fig.add_trace(go.Scatter(
+                                        x=dates, y=np.full(len(dates), upper_band),
+                                        mode='lines', name='+2σ',
+                                        line=dict(color='rgba(255,107,107,0.5)', width=1, dash='dot')
+                                    ))
+                                    fig.add_trace(go.Scatter(
+                                        x=dates, y=np.full(len(dates), lower_band),
+                                        mode='lines', name='-2σ',
+                                        line=dict(color='rgba(78,205,196,0.5)', width=1, dash='dot'),
+                                        fill='tonexty', fillcolor='rgba(99,102,241,0.1)'
+                                    ))
+                                    
+                                    # Equilibrium line
+                                    fig.add_trace(go.Scatter(
+                                        x=dates, y=np.full(len(dates), eq_price),
+                                        mode='lines', name=f'Equilibrium (μ = ${eq_price:.2f})',
+                                        line=dict(color='#FFE66D', width=2, dash='dash')
+                                    ))
+                                    
+                                    # Price
+                                    fig.add_trace(go.Scatter(
+                                        x=dates, y=price_series,
+                                        mode='lines', name='Price',
+                                        line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2)
+                                    ))
+                                    
+                                    # Mark current price
+                                    fig.add_trace(go.Scatter(
+                                        x=[dates[-1]], y=[price_series[-1]],
+                                        mode='markers', name='Current',
+                                        marker=dict(size=12, color='white', line=dict(width=2, color=CHART_COLORS[i % len(CHART_COLORS)]))
+                                    ))
+                                    
+                                    fig.update_layout(
+                                        height=350,
+                                        xaxis_title="Date",
+                                        yaxis_title="Price ($)",
+                                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+                                        hovermode='x unified'
+                                    )
+                                    fig = apply_plotly_theme(fig)
+                                    st.plotly_chart(fig, use_container_width=True)
+                                
+                                with col2:
+                                    # O-U Parameters table
+                                    st.markdown("##### O-U Parameters")
+                                    
+                                    params_data = {
+                                        'Parameter': ['θ (speed)', 'μ (equilibrium)', 'σ (volatility)', 'Half-life', 'AR(1) coef β'],
+                                        'Value': [
+                                            f"{theta_i:.4f}",
+                                            f"{mu_i:.4f}" + (f" (${np.exp(mu_i):.2f})" if use_log else ""),
+                                            f"{sigma_eps_i:.4f}",
+                                            f"{half_life_i:.1f} days" if half_life_i != np.inf else "∞",
+                                            f"{b_i:.4f}"
+                                        ]
+                                    }
+                                    st.markdown(create_styled_table(pd.DataFrame(params_data)), unsafe_allow_html=True)
+                                    
+                                    # Tradability assessment
+                                    st.markdown("##### 🎯 Tradability Assessment")
+                                    
+                                    if half_life_i < 20:
+                                        st.success(f"✅ **Excellent** for mean-reversion trading")
+                                        st.markdown(f"Half-life of {half_life_i:.1f} days allows for frequent trading opportunities.")
+                                    elif half_life_i < 60:
+                                        st.info(f"ℹ️ **Moderate** mean-reversion")
+                                        st.markdown(f"Half-life of {half_life_i:.1f} days → trades take weeks to play out.")
+                                    elif half_life_i != np.inf:
+                                        st.warning(f"⚠️ **Slow** mean-reversion")
+                                        st.markdown(f"Half-life of {half_life_i:.1f} days is too slow for active trading.")
+                                    else:
+                                        st.error("❌ **No mean-reversion detected**")
+                                        st.markdown("This asset behaves like a random walk. Mean-reversion strategies won't work.")
+                                
+                                # ============================================
+                                # TRADING SIGNALS
+                                # ============================================
+                                st.markdown("##### 📡 Trading Signals")
+                                
+                                sig_col1, sig_col2, sig_col3 = st.columns(3)
+                                
+                                with sig_col1:
+                                    # Z-Score Signal
+                                    st.markdown("**Z-Score Signal**")
+                                    
+                                    z_display = z_score_i
+                                    
+                                    if z_display > 2:
+                                        signal_color = "#FF6B6B"
+                                        signal_text = "🔴 STRONG SELL"
+                                        signal_desc = f"Price is {z_display:.2f}σ above equilibrium"
+                                    elif z_display > 1:
+                                        signal_color = "#FF9F43"
+                                        signal_text = "🟠 SELL"
+                                        signal_desc = f"Price is {z_display:.2f}σ above equilibrium"
+                                    elif z_display < -2:
+                                        signal_color = "#4ECDC4"
+                                        signal_text = "🟢 STRONG BUY"
+                                        signal_desc = f"Price is {abs(z_display):.2f}σ below equilibrium"
+                                    elif z_display < -1:
+                                        signal_color = "#95E1D3"
+                                        signal_text = "🟢 BUY"
+                                        signal_desc = f"Price is {abs(z_display):.2f}σ below equilibrium"
+                                    else:
+                                        signal_color = "#6366F1"
+                                        signal_text = "⚪ NEUTRAL"
+                                        signal_desc = f"Price is within ±1σ of equilibrium"
+                                    
+                                    st.markdown(f"""
+                                    <div style='background: {signal_color}22; border-left: 4px solid {signal_color}; 
+                                                padding: 1rem; border-radius: 8px;'>
+                                        <strong style='color: {signal_color}; font-size: 1.2rem;'>{signal_text}</strong><br>
+                                        <span style='color: #94a3b8;'>{signal_desc}</span>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                
+                                with sig_col2:
+                                    # Entry/Exit Levels
+                                    st.markdown("**Entry/Exit Levels**")
+                                    
+                                    if use_log:
+                                        entry_buy = np.exp(mu_i - 1.5 * sigma_unconditional_i)
+                                        entry_sell = np.exp(mu_i + 1.5 * sigma_unconditional_i)
+                                        target = np.exp(mu_i)
+                                        stop_loss_long = np.exp(mu_i - 3 * sigma_unconditional_i)
+                                        stop_loss_short = np.exp(mu_i + 3 * sigma_unconditional_i)
+                                    else:
+                                        entry_buy = mu_i - 1.5 * sigma_unconditional_i
+                                        entry_sell = mu_i + 1.5 * sigma_unconditional_i
+                                        target = mu_i
+                                        stop_loss_long = mu_i - 3 * sigma_unconditional_i
+                                        stop_loss_short = mu_i + 3 * sigma_unconditional_i
+                                    
+                                    levels_data = {
+                                        'Level': ['Buy Entry', 'Sell Entry', 'Target (μ)', 'Stop Loss (Long)', 'Stop Loss (Short)'],
+                                        'Price': [f"${entry_buy:.2f}", f"${entry_sell:.2f}", f"${target:.2f}", 
+                                                  f"${stop_loss_long:.2f}", f"${stop_loss_short:.2f}"]
+                                    }
+                                    st.markdown(create_styled_table(pd.DataFrame(levels_data)), unsafe_allow_html=True)
+                                
+                                with sig_col3:
+                                    # Probability of Mean-Reversion
+                                    st.markdown("**Reversion Probability**")
+                                    
+                                    if half_life_i != np.inf and half_life_i > 0:
+                                        # Probability of crossing equilibrium within N days
+                                        # Simplified: using decay factor
+                                        horizons = [5, 10, 20]
+                                        
+                                        for h in horizons:
+                                            # Expected deviation after h days
+                                            decay = b_i ** h
+                                            expected_dev = decay * (x_current_i - mu_i)
+                                            # Probability of being closer to mean
+                                            prob_closer = 1 - decay  # Simplified approximation
+                                            
+                                            if prob_closer > 0.7:
+                                                color = "#4ECDC4"
+                                            elif prob_closer > 0.4:
+                                                color = "#FFE66D"
+                                            else:
+                                                color = "#FF6B6B"
+                                            
+                                            st.markdown(f"""
+                                            <div style='display: flex; justify-content: space-between; 
+                                                        padding: 0.5rem; background: {color}22; 
+                                                        border-radius: 4px; margin-bottom: 0.25rem;'>
+                                                <span>Closer to μ in {h}d:</span>
+                                                <strong style='color: {color};'>{prob_closer*100:.0f}%</strong>
+                                            </div>
+                                            """, unsafe_allow_html=True)
+                                    else:
+                                        st.markdown("*No mean-reversion detected*")
+                                
+                                if n_assets > 1:
+                                    st.markdown("---")
+
+                        # ============================================================
+                        # SECTION 2: VAR(1) SYSTEM DYNAMICS (Multi-asset only)
+                        # ============================================================
+                        if n_assets >= 2:
+                            
+                            st.markdown("## 🔗 VAR(1) System Dynamics")
+                            
+                            st.markdown("""
+                            The **Vector Autoregression** captures how assets influence each other over time.
+                            The transition matrix $B$ shows both **own dynamics** (diagonal) and **cross-asset effects** (off-diagonal).
+                            """)
+                            
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                # Transition Matrix Heatmap
+                                st.markdown("##### Transition Matrix B")
+                                
+                                asset_names = [get_display_name(a) for a in mr['assets']]
+                                
+                                fig_b = go.Figure(data=go.Heatmap(
+                                    z=b_hat,
+                                    x=asset_names,
+                                    y=asset_names,
+                                    colorscale='RdBu_r',
+                                    zmid=0,
+                                    zmin=-1, zmax=1,
+                                    text=np.round(b_hat, 3),
+                                    texttemplate='%{text}',
+                                    textfont=dict(size=11, color='white'),
+                                    hovertemplate='%{y} → %{x}<br>Coefficient: %{z:.4f}<extra></extra>',
+                                    colorbar=dict(title='Coefficient')
+                                ))
+                                
+                                fig_b.update_layout(
+                                    height=350,
+                                    xaxis_title="Today's asset",
+                                    yaxis_title="Yesterday's asset",
+                                    yaxis=dict(autorange='reversed')
+                                )
+                                fig_b = apply_plotly_theme(fig_b)
+                                st.plotly_chart(fig_b, use_container_width=True)
+                                
+                                st.markdown("""
+                                **How to read this:**
+                                - **Diagonal (B_ii):** Own persistence. Values < 1 indicate mean-reversion.
+                                - **Off-diagonal (B_ij):** How asset j yesterday affects asset i today.
+                                - **Positive off-diagonal:** Assets move together (momentum spillover)
+                                - **Negative off-diagonal:** Assets move opposite (mean-reversion spillover)
+                                """)
+                            
+                            with col2:
+                                # Eigenvalue Analysis
+                                st.markdown("##### Eigenvalue Analysis (Stability)")
+                                
+                                # Plot eigenvalues in complex plane
+                                fig_eig = go.Figure()
+                                
+                                # Unit circle
+                                theta = np.linspace(0, 2*np.pi, 100)
+                                fig_eig.add_trace(go.Scatter(
+                                    x=np.cos(theta), y=np.sin(theta),
+                                    mode='lines', name='Unit Circle',
+                                    line=dict(color='rgba(255,255,255,0.3)', width=2, dash='dash')
+                                ))
+                                
+                                # Eigenvalues
+                                eig_real = np.real(eigenvalues)
+                                eig_imag = np.imag(eigenvalues)
+                                eig_abs = np.abs(eigenvalues)
+                                
+                                colors = ['#4ECDC4' if abs(e) < 1 else '#FF6B6B' for e in eigenvalues]
+                                
+                                fig_eig.add_trace(go.Scatter(
+                                    x=eig_real, y=eig_imag,
+                                    mode='markers+text',
+                                    name='Eigenvalues',
+                                    marker=dict(size=15, color=colors, line=dict(width=2, color='white')),
+                                    text=[f'λ{i+1}' for i in range(len(eigenvalues))],
+                                    textposition='top center',
+                                    textfont=dict(color='#E2E8F0', size=10),
+                                    hovertemplate='λ = %{x:.3f} + %{y:.3f}i<br>|λ| = ' + 
+                                                  '<br>'.join([f'{abs(e):.3f}' for e in eigenvalues]) + '<extra></extra>'
+                                ))
+                                
+                                fig_eig.update_layout(
+                                    height=350,
+                                    xaxis_title="Real Part",
+                                    yaxis_title="Imaginary Part",
+                                    xaxis=dict(range=[-1.5, 1.5], scaleanchor="y"),
+                                    yaxis=dict(range=[-1.5, 1.5]),
+                                    showlegend=False
+                                )
+                                fig_eig = apply_plotly_theme(fig_eig)
+                                st.plotly_chart(fig_eig, use_container_width=True)
+                                
+                                # Eigenvalue table
+                                eig_data = []
+                                for idx, (ev, hl) in enumerate(zip(eigenvalues, half_lives)):
+                                    eig_data.append({
+                                        'Eigenvalue': f"λ{idx+1}",
+                                        'Value': f"{np.real(ev):.4f}" + (f" + {np.imag(ev):.4f}i" if np.imag(ev) != 0 else ""),
+                                        '|λ|': f"{np.abs(ev):.4f}",
+                                        'Half-life': f"{hl:.1f} days" if hl != np.inf else "∞",
+                                        'Status': "✅ Stable" if np.abs(ev) < 1 else "⚠️ Unstable"
+                                    })
+                                
+                                st.markdown(create_styled_table(pd.DataFrame(eig_data)), unsafe_allow_html=True)
+                            
+                            # System stability interpretation
+                            st.markdown("##### 🎯 System Interpretation")
+                            
+                            if mr['is_stable']:
+                                st.success(f"""
+                                **✅ The system is stable** (all |λ| < 1)
+                                
+                                This means:
+                                - Shocks to any asset will eventually die out
+                                - The system has a well-defined long-run equilibrium
+                                - Mean-reversion strategies can work on this asset set
+                                
+                                **Fastest mean-reversion:** {min([hl for hl in half_lives if hl != np.inf]):.1f} days
+                                **Slowest mean-reversion:** {max([hl for hl in half_lives if hl != np.inf]):.1f} days
+                                """)
+                            else:
+                                st.error(f"""
+                                **⚠️ The system is unstable** (some |λ| ≥ 1)
+                                
+                                This means:
+                                - The assets contain unit roots or explosive dynamics
+                                - There is no long-run equilibrium to revert to
+                                - Individual mean-reversion strategies are risky
+                                
+                                **However:** Check the cointegration analysis below - there may still be 
+                                stable *combinations* of these assets (spreads) that mean-revert.
+                                """)
+                            
+                            st.markdown("---")
+                            
+                            # ============================================================
+                            # SECTION 3: COINTEGRATION ANALYSIS
+                            # ============================================================
+                            st.markdown("## 🔄 Cointegration Analysis")
+                            
+                            st.markdown("""
+                            **Cointegration** occurs when non-stationary assets have a linear combination that IS stationary.
+                            
+                            **Why does this matter?**
+                            - Even if SPY and IVV both trend upward (non-stationary), their *spread* might mean-revert
+                            - Cointegrated pairs are the foundation of **pairs trading** and **statistical arbitrage**
+                            - The cointegration vector tells you the **hedge ratio**
+                            """)
+                            
+                            c_hat = mr['c_hat']
+                            beta_hat = mr['beta_hat']
+                            
+                            if c_hat is not None and c_hat.size > 0:
+                                
+                                n_coint = c_hat.shape[1] if len(c_hat.shape) > 1 else 1
+                                
+                                if n_coint > 0:
+                                    st.success(f"**✅ Found {n_coint} cointegration relationship(s)!** These represent tradable spreads.")
+                                    
+                                    # Ensure proper shape
+                                    if len(c_hat.shape) == 1:
+                                        c_hat = c_hat.reshape(-1, 1)
+                                    if np.isscalar(beta_hat):
+                                        beta_hat = np.array([beta_hat])
+                                    
+                                    # Create tabs for each cointegration vector
+                                    if n_coint > 1:
+                                        coint_tabs = st.tabs([f"Spread {i+1}" for i in range(n_coint)])
+                                    else:
+                                        coint_tabs = [st.container()]
+                                    
+                                    for coint_idx, coint_tab in enumerate(coint_tabs):
+                                        with coint_tab:
+                                            
+                                            # Get cointegration vector
+                                            c_vec = c_hat[:, coint_idx]
+                                            beta_i = beta_hat[coint_idx] if len(beta_hat) > coint_idx else beta_hat[0]
+                                            
+                                            # Half-life of the spread
+                                            spread_half_life = np.log(2) / (-np.log(np.abs(beta_i))) if np.abs(beta_i) < 1 else np.inf
+                                            
+                                            col1, col2 = st.columns([1.5, 1])
+                                            
+                                            with col1:
+                                                # Compute the spread
+                                                spread = x @ c_vec
+                                                spread_mean = np.mean(spread)
+                                                spread_std = np.std(spread)
+                                                spread_zscore = (spread - spread_mean) / spread_std
+                                                current_spread_z = spread_zscore[-1]
+                                                
+                                                # Spread chart
+                                                st.markdown(f"##### Spread Time Series (Z-Score)")
+                                                
+                                                fig_spread = go.Figure()
+                                                
+                                                # Z-score bands
+                                                fig_spread.add_hline(y=2, line_dash="dot", line_color="#FF6B6B", 
+                                                                     annotation_text="+2σ (Sell)")
+                                                fig_spread.add_hline(y=-2, line_dash="dot", line_color="#4ECDC4",
+                                                                     annotation_text="-2σ (Buy)")
+                                                fig_spread.add_hline(y=0, line_dash="dash", line_color="#FFE66D")
+                                                
+                                                # Spread
+                                                fig_spread.add_trace(go.Scatter(
+                                                    x=dates, y=spread_zscore,
+                                                    mode='lines', name='Spread Z-Score',
+                                                    line=dict(color=CHART_COLORS[coint_idx % len(CHART_COLORS)], width=2),
+                                                    fill='tozeroy',
+                                                    fillcolor=f'rgba({",".join(str(int(c*255)) for c in plt.cm.tab10(coint_idx)[:3])}, 0.2)' 
+                                                              if 'plt' in dir() else 'rgba(99,102,241,0.2)'
+                                                ))
+                                                
+                                                # Current point
+                                                fig_spread.add_trace(go.Scatter(
+                                                    x=[dates[-1]], y=[current_spread_z],
+                                                    mode='markers', name='Current',
+                                                    marker=dict(size=12, color='white', 
+                                                               line=dict(width=2, color=CHART_COLORS[coint_idx % len(CHART_COLORS)]))
+                                                ))
+                                                
+                                                fig_spread.update_layout(
+                                                    height=300,
+                                                    xaxis_title="Date",
+                                                    yaxis_title="Z-Score",
+                                                    yaxis=dict(range=[-4, 4]),
+                                                    showlegend=False,
+                                                    hovermode='x unified'
+                                                )
+                                                fig_spread = apply_plotly_theme(fig_spread)
+                                                st.plotly_chart(fig_spread, use_container_width=True)
+                                            
+                                            with col2:
+                                                # Cointegration vector (hedge ratios)
+                                                st.markdown("##### Hedge Ratios (Cointegration Vector)")
+                                                
+                                                # Normalize so first non-zero is 1
+                                                c_normalized = c_vec / c_vec[np.argmax(np.abs(c_vec))]
+                                                
+                                                hedge_data = {
+                                                    'Asset': [get_display_name(a) for a in mr['assets']],
+                                                    'Raw Weight': [f"{c:.4f}" for c in c_vec],
+                                                    'Normalized': [f"{c:.4f}" for c in c_normalized],
+                                                    'Position': ['LONG' if c > 0.01 else 'SHORT' if c < -0.01 else '-' for c in c_normalized]
+                                                }
+                                                st.markdown(create_styled_table(pd.DataFrame(hedge_data)), unsafe_allow_html=True)
+                                                
+                                                # Spread statistics
+                                                st.markdown("##### Spread Statistics")
+                                                
+                                                spread_stats = {
+                                                    'Metric': ['AR(1) β', 'Half-life', 'Current Z', 'Mean', 'Std Dev'],
+                                                    'Value': [
+                                                        f"{beta_i:.4f}",
+                                                        f"{spread_half_life:.1f} days" if spread_half_life != np.inf else "∞",
+                                                        f"{current_spread_z:+.2f}σ",
+                                                        f"{spread_mean:.4f}",
+                                                        f"{spread_std:.4f}"
+                                                    ]
+                                                }
+                                                st.markdown(create_styled_table(pd.DataFrame(spread_stats)), unsafe_allow_html=True)
+                                            
+                                            # Trading signal for spread
+                                            st.markdown("##### 📡 Spread Trading Signal")
+                                            
+                                            sig_col1, sig_col2, sig_col3 = st.columns(3)
+                                            
+                                            with sig_col1:
+                                                if current_spread_z > 2:
+                                                    st.error(f"""
+                                                    **🔴 SELL SPREAD** (Z = {current_spread_z:+.2f})
+                                                    
+                                                    Action: Short the spread
+                                                    """)
+                                                    # Show positions
+                                                    for a, c in zip(mr['assets'], c_normalized):
+                                                        pos = "SHORT" if c > 0 else "LONG"
+                                                        st.markdown(f"• **{pos}** {abs(c):.2f} units of {get_display_name(a)}")
+                                                        
+                                                elif current_spread_z < -2:
+                                                    st.success(f"""
+                                                    **🟢 BUY SPREAD** (Z = {current_spread_z:+.2f})
+                                                    
+                                                    Action: Long the spread
+                                                    """)
+                                                    for a, c in zip(mr['assets'], c_normalized):
+                                                        pos = "LONG" if c > 0 else "SHORT"
+                                                        st.markdown(f"• **{pos}** {abs(c):.2f} units of {get_display_name(a)}")
+                                                        
+                                                elif abs(current_spread_z) > 1:
+                                                    st.warning(f"""
+                                                    **🟡 WATCH** (Z = {current_spread_z:+.2f})
+                                                    
+                                                    Approaching tradable levels. Wait for Z > 2 or Z < -2.
+                                                    """)
+                                                else:
+                                                    st.info(f"""
+                                                    **⚪ NEUTRAL** (Z = {current_spread_z:+.2f})
+                                                    
+                                                    Spread is near equilibrium. No trade signal.
+                                                    """)
+                                            
+                                            with sig_col2:
+                                                st.markdown("**Trade Parameters**")
+                                                
+                                                trade_params = {
+                                                    'Parameter': ['Entry (Long)', 'Entry (Short)', 'Target', 'Stop Loss'],
+                                                    'Z-Score': ['-2.0σ', '+2.0σ', '0.0σ', '±3.0σ']
+                                                }
+                                                st.markdown(create_styled_table(pd.DataFrame(trade_params)), unsafe_allow_html=True)
+                                            
+                                            with sig_col3:
+                                                st.markdown("**Expected Holding Period**")
+                                                
+                                                if spread_half_life != np.inf:
+                                                    # Time to go from current Z to 0
+                                                    if abs(current_spread_z) > 0.5:
+                                                        expected_days = spread_half_life * np.log(abs(current_spread_z)) / np.log(2)
+                                                        st.metric("Est. Time to Target", f"{expected_days:.0f} days")
+                                                    else:
+                                                        st.metric("Est. Time to Target", "At target")
+                                                    
+                                                    st.metric("Half-Life", f"{spread_half_life:.1f} days")
+                                                else:
+                                                    st.warning("Spread half-life is infinite")
+                                            
+                                            if n_coint > 1:
+                                                st.markdown("---")
+                                
+                                else:
+                                    st.warning("""
+                                    **⚠️ No cointegration relationships found.**
+                                    
+                                    This means:
+                                    - The selected assets don't have stable linear combinations
+                                    - Pairs trading on these assets is risky
+                                    - Consider selecting different assets or a longer time period
+                                    """)
+                            
+                            else:
+                                st.warning("""
+                                **⚠️ No cointegration relationships found.**
+                                
+                                The selected assets appear to move independently without stable long-run relationships.
+                                """)
+                            
+                            st.markdown("---")
+                            
+                            # ============================================================
+                            # SECTION 4: IMPULSE RESPONSE FUNCTIONS
+                            # ============================================================
+                            st.markdown("## 📊 Impulse Response Analysis")
+                            
+                            st.markdown("""
+                            **Impulse Response Functions (IRF)** show how a shock to one asset propagates through the system over time.
+                            
+                            This answers: *"If Asset A jumps 1% today, what happens to Assets B, C, D over the next N days?"*
+                            """)
+                            
+                            # Select shock asset
+                            shock_asset_idx = st.selectbox(
+                                "Select asset to shock",
+                                options=list(range(n_assets)),
+                                format_func=lambda x: get_display_name(mr['assets'][x]),
+                                key="irf_shock_asset"
+                            )
+                            
+                            irf_horizon = st.slider("IRF Horizon (days)", 5, 60, 20, key="irf_horizon")
+                            
+                            # Compute IRF
+                            irf = np.zeros((irf_horizon + 1, n_assets))
+                            
+                            # Initial shock: 1 unit to selected asset
+                            shock = np.zeros(n_assets)
+                            shock[shock_asset_idx] = 1.0
+                            
+                            irf[0, :] = shock
+                            
+                            # Propagate
+                            for t in range(1, irf_horizon + 1):
+                                irf[t, :] = b_hat @ irf[t-1, :]
+                            
+                            # Plot IRF
+                            fig_irf = go.Figure()
+                            
+                            for i, asset in enumerate(mr['assets']):
+                                fig_irf.add_trace(go.Scatter(
+                                    x=list(range(irf_horizon + 1)),
+                                    y=irf[:, i],
+                                    mode='lines+markers',
+                                    name=get_display_name(asset),
+                                    line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2),
+                                    marker=dict(size=6)
+                                ))
+                            
+                            fig_irf.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+                            
+                            fig_irf.update_layout(
+                                height=400,
+                                xaxis_title="Days After Shock",
+                                yaxis_title="Response",
+                                title=f"Response to 1-Unit Shock in {get_display_name(mr['assets'][shock_asset_idx])}",
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+                                hovermode='x unified'
+                            )
+                            fig_irf = apply_plotly_theme(fig_irf)
+                            st.plotly_chart(fig_irf, use_container_width=True)
+                            
+                            # IRF interpretation
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.markdown("##### Cumulative Impact After 20 Days")
+                                
+                                cumulative_irf = np.sum(irf[:min(21, irf_horizon+1), :], axis=0)
+                                
+                                impact_data = {
+                                    'Asset': [get_display_name(a) for a in mr['assets']],
+                                    'Cumulative Response': [f"{c:.4f}" for c in cumulative_irf],
+                                    'Interpretation': [
+                                        '🔵 Same direction' if c > 0.1 else '🔴 Opposite direction' if c < -0.1 else '⚪ Minimal impact'
+                                        for c in cumulative_irf
+                                    ]
+                                }
+                                st.markdown(create_styled_table(pd.DataFrame(impact_data)), unsafe_allow_html=True)
+                            
+                            with col2:
+                                st.markdown("##### Shock Persistence")
+                                
+                                # How much of initial shock remains after various horizons
+                                shock_remaining = []
+                                for h in [5, 10, 20]:
+                                    if h <= irf_horizon:
+                                        remaining = np.linalg.norm(irf[h, :]) / np.linalg.norm(irf[0, :]) * 100
+                                        shock_remaining.append({'Horizon': f'{h} days', 'Shock Remaining': f'{remaining:.1f}%'})
+                                
+                                if shock_remaining:
+                                    st.markdown(create_styled_table(pd.DataFrame(shock_remaining)), unsafe_allow_html=True)
+                                
+                                if mr['is_stable']:
+                                    st.info("✅ Shocks decay over time (stable system)")
+                                else:
+                                    st.warning("⚠️ Shocks may persist or grow (unstable system)")
+
+                        # ============================================================
+                        # SECTION 5: FORECASTING
+                        # ============================================================
+                        st.markdown("## 🔮 Forecasting")
+                        
+                        st.markdown(f"""
+                        Using the estimated VAR(1) model, we generate **point forecasts** and **confidence intervals** 
+                        for the next **{forecast_horizon} days**.
+                        
+                        The forecast formula is:
+                        
+                        $$\\hat{{X}}_{{t+h}} = \\mu + B^h (X_t - \\mu)$$
+                        
+                        Where the forecast error grows with horizon due to accumulated uncertainty.
+                        """)
+                        
+                        # Select asset to forecast
+                        forecast_asset_idx = st.selectbox(
+                            "Select asset to forecast",
+                            options=list(range(n_assets)),
+                            format_func=lambda x: get_display_name(mr['assets'][x]),
+                            key="forecast_asset"
+                        )
+                        
+                        # Compute forecasts
+                        x_current = x[-1, :]
+                        deviation = x_current - mu_longrun
+                        
+                        forecasts = np.zeros((forecast_horizon + 1, n_assets))
+                        forecast_std = np.zeros((forecast_horizon + 1, n_assets))
+                        
+                        forecasts[0, :] = x_current
+                        forecast_std[0, :] = 0
+                        
+                        # Compute forecast variance iteratively
+                        # Var(X_{t+h}) = B^h Var(X_t) (B^h)' + sum_{j=0}^{h-1} B^j Sigma (B^j)'
+                        # For simplicity, we use the unconditional variance approximation
+                        
+                        B_power = np.eye(n_assets)
+                        cumulative_var = np.zeros((n_assets, n_assets))
+                        
+                        for h in range(1, forecast_horizon + 1):
+                            B_power = B_power @ b_hat
+                            forecasts[h, :] = mu_longrun + B_power @ deviation
+                            
+                            # Accumulate forecast variance
+                            cumulative_var = b_hat @ cumulative_var @ b_hat.T + sigma2_hat
+                            forecast_std[h, :] = np.sqrt(np.diag(cumulative_var))
+                        
+                        # Confidence intervals
+                        z_alpha = stats.norm.ppf(1 - (1 - confidence_level) / 2)
+                        
+                        forecast_upper = forecasts + z_alpha * forecast_std
+                        forecast_lower = forecasts - z_alpha * forecast_std
+                        
+                        # Convert to prices if using log
+                        if use_log:
+                            price_forecast = np.exp(forecasts[:, forecast_asset_idx])
+                            price_upper = np.exp(forecast_upper[:, forecast_asset_idx])
+                            price_lower = np.exp(forecast_lower[:, forecast_asset_idx])
+                            historical_prices = np.exp(x[:, forecast_asset_idx])
+                        else:
+                            price_forecast = forecasts[:, forecast_asset_idx]
+                            price_upper = forecast_upper[:, forecast_asset_idx]
+                            price_lower = forecast_lower[:, forecast_asset_idx]
+                            historical_prices = x[:, forecast_asset_idx]
+                        
+                        # Create forecast dates
+                        last_date = dates[-1]
+                        forecast_dates = pd.date_range(start=last_date, periods=forecast_horizon + 1, freq='B')
+                        
+                        # Plot
+                        col1, col2 = st.columns([2, 1])
+                        
+                        with col1:
+                            fig_forecast = go.Figure()
+                            
+                            # Historical data (last 60 days)
+                            hist_start = max(0, len(dates) - 60)
+                            
+                            fig_forecast.add_trace(go.Scatter(
+                                x=dates[hist_start:],
+                                y=historical_prices[hist_start:],
+                                mode='lines',
+                                name='Historical',
+                                line=dict(color=CHART_COLORS[forecast_asset_idx % len(CHART_COLORS)], width=2)
+                            ))
+                            
+                            # Confidence interval
+                            fig_forecast.add_trace(go.Scatter(
+                                x=list(forecast_dates) + list(forecast_dates[::-1]),
+                                y=list(price_upper) + list(price_lower[::-1]),
+                                fill='toself',
+                                fillcolor=f'rgba({99}, {102}, {241}, 0.2)',
+                                line=dict(color='rgba(0,0,0,0)'),
+                                name=f'{confidence_level*100:.0f}% CI',
+                                hoverinfo='skip'
+                            ))
+                            
+                            # Point forecast
+                            fig_forecast.add_trace(go.Scatter(
+                                x=forecast_dates,
+                                y=price_forecast,
+                                mode='lines+markers',
+                                name='Forecast',
+                                line=dict(color='#FFE66D', width=2, dash='dash'),
+                                marker=dict(size=6)
+                            ))
+                            
+                            # Equilibrium line
+                            eq_price = np.exp(mu_longrun[forecast_asset_idx]) if use_log else mu_longrun[forecast_asset_idx]
+                            fig_forecast.add_hline(
+                                y=eq_price, line_dash="dot", line_color="#4ECDC4",
+                                annotation_text=f"Equilibrium: ${eq_price:.2f}"
+                            )
+                            
+                            fig_forecast.update_layout(
+                                height=400,
+                                xaxis_title="Date",
+                                yaxis_title="Price ($)",
+                                title=f"{get_display_name(mr['assets'][forecast_asset_idx])}: {forecast_horizon}-Day Forecast",
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+                                hovermode='x unified'
+                            )
+                            fig_forecast = apply_plotly_theme(fig_forecast)
+                            st.plotly_chart(fig_forecast, use_container_width=True)
+                        
+                        with col2:
+                            st.markdown("##### Forecast Summary")
+                            
+                            current_price = price_forecast[0]
+                            final_forecast = price_forecast[-1]
+                            final_upper = price_upper[-1]
+                            final_lower = price_lower[-1]
+                            
+                            expected_return = (final_forecast / current_price - 1) * 100
+                            
+                            forecast_summary = {
+                                'Metric': [
+                                    'Current Price',
+                                    f'{forecast_horizon}d Forecast',
+                                    f'{confidence_level*100:.0f}% Upper',
+                                    f'{confidence_level*100:.0f}% Lower',
+                                    'Expected Return',
+                                    'Equilibrium'
+                                ],
+                                'Value': [
+                                    f"${current_price:.2f}",
+                                    f"${final_forecast:.2f}",
+                                    f"${final_upper:.2f}",
+                                    f"${final_lower:.2f}",
+                                    f"{expected_return:+.2f}%",
+                                    f"${eq_price:.2f}"
+                                ]
+                            }
+                            st.markdown(create_styled_table(pd.DataFrame(forecast_summary)), unsafe_allow_html=True)
+                            
+                            # Direction probability
+                            st.markdown("##### Direction Probabilities")
+                            
+                            # Probability of price going up/down
+                            # P(X_{t+h} > X_t) using normal approximation
+                            forecast_mean_h = forecasts[-1, forecast_asset_idx]
+                            forecast_std_h = forecast_std[-1, forecast_asset_idx]
+                            current_x = x[-1, forecast_asset_idx]
+                            
+                            if forecast_std_h > 0:
+                                prob_up = 1 - stats.norm.cdf(current_x, forecast_mean_h, forecast_std_h)
+                                prob_down = stats.norm.cdf(current_x, forecast_mean_h, forecast_std_h)
+                            else:
+                                prob_up = 0.5
+                                prob_down = 0.5
+                            
+                            # Probability of reaching equilibrium
+                            if forecast_std_h > 0:
+                                prob_reach_eq = 1 - abs(stats.norm.cdf(mu_longrun[forecast_asset_idx], forecast_mean_h, forecast_std_h) - 0.5) * 2
+                            else:
+                                prob_reach_eq = 0
+                            
+                            prob_col1, prob_col2 = st.columns(2)
+                            
+                            with prob_col1:
+                                up_color = "#4ECDC4" if prob_up > 0.5 else "#94a3b8"
+                                st.markdown(f"""
+                                <div style='text-align: center; padding: 1rem; 
+                                            background: {up_color}22; border-radius: 8px;'>
+                                    <div style='font-size: 1.5rem; font-weight: bold; color: {up_color};'>
+                                        {prob_up*100:.0f}%
+                                    </div>
+                                    <div style='color: #94a3b8; font-size: 0.85rem;'>Price UP</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                            
+                            with prob_col2:
+                                down_color = "#FF6B6B" if prob_down > 0.5 else "#94a3b8"
+                                st.markdown(f"""
+                                <div style='text-align: center; padding: 1rem; 
+                                            background: {down_color}22; border-radius: 8px;'>
+                                    <div style='font-size: 1.5rem; font-weight: bold; color: {down_color};'>
+                                        {prob_down*100:.0f}%
+                                    </div>
+                                    <div style='color: #94a3b8; font-size: 0.85rem;'>Price DOWN</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                        
+                        # Forecast table for key horizons
+                        st.markdown("##### Forecast at Key Horizons")
+                        
+                        key_horizons = [5, 10, 20, forecast_horizon] if forecast_horizon > 20 else [5, 10, forecast_horizon]
+                        key_horizons = [h for h in key_horizons if h <= forecast_horizon]
+                        
+                        horizon_data = []
+                        for h in key_horizons:
+                            h_price = price_forecast[h]
+                            h_upper = price_upper[h]
+                            h_lower = price_lower[h]
+                            h_return = (h_price / current_price - 1) * 100
+                            
+                            horizon_data.append({
+                                'Horizon': f'{h} days',
+                                'Forecast': f'${h_price:.2f}',
+                                f'{confidence_level*100:.0f}% Range': f'${h_lower:.2f} - ${h_upper:.2f}',
+                                'Exp. Return': f'{h_return:+.2f}%',
+                                'Uncertainty': f'±${(h_upper - h_lower)/2:.2f}'
+                            })
+                        
+                        st.markdown(create_styled_table(pd.DataFrame(horizon_data)), unsafe_allow_html=True)
+                        
+                        st.markdown("---")
+                        
+                        # ============================================================
+                        # SECTION 6: SUMMARY & RECOMMENDATIONS
+                        # ============================================================
+                        st.markdown("## 💼 Summary & Recommendations")
+                        
+                        # Build comprehensive summary
+                        findings = []
+                        recommendations = []
+                        warnings = []
+                        
+                        # 1. System stability
+                        if mr['is_stable']:
+                            findings.append(f"✅ **System is stable** - all eigenvalues inside unit circle (max |λ| = {np.max(np.abs(eigenvalues)):.3f})")
+                        else:
+                            warnings.append(f"⚠️ **System is unstable** - contains unit roots (max |λ| = {np.max(np.abs(eigenvalues)):.3f})")
+                            recommendations.append("Consider differencing the data or focusing on cointegrated spreads only")
+                        
+                        # 2. Mean-reversion speed
+                        tradable_assets = []
+                        for i, asset in enumerate(mr['assets']):
+                            b_i = b_hat[i, i] if n_assets > 1 else b_hat[0, 0]
+                            if np.abs(b_i) < 1:
+                                hl = np.log(2) / (-np.log(np.abs(b_i)))
+                                if hl < 20:
+                                    tradable_assets.append((get_display_name(asset), hl, 'excellent'))
+                                elif hl < 60:
+                                    tradable_assets.append((get_display_name(asset), hl, 'moderate'))
+                        
+                        if tradable_assets:
+                            excellent = [a for a in tradable_assets if a[2] == 'excellent']
+                            if excellent:
+                                findings.append(f"✅ **Fast mean-reversion detected** in: {', '.join([a[0] + f' ({a[1]:.0f}d)' for a in excellent])}")
+                                recommendations.append(f"Consider mean-reversion strategies on {', '.join([a[0] for a in excellent])}")
+                        else:
+                            findings.append("ℹ️ No assets show fast mean-reversion (half-life < 20 days)")
+                        
+                        # 3. Cointegration
+                        if n_assets >= 2 and c_hat is not None and c_hat.size > 0:
+                            n_coint = c_hat.shape[1] if len(c_hat.shape) > 1 else 1
+                            if n_coint > 0:
+                                findings.append(f"✅ **{n_coint} cointegration relationship(s) found** - tradable spreads available")
+                                recommendations.append("Consider pairs trading / statistical arbitrage on the identified spreads")
+                                
+                                # Check spread Z-scores
+                                for coint_idx in range(n_coint):
+                                    c_vec = c_hat[:, coint_idx] if len(c_hat.shape) > 1 else c_hat
+                                    spread = x @ c_vec
+                                    spread_z = (spread[-1] - np.mean(spread)) / np.std(spread)
+                                    
+                                    if abs(spread_z) > 2:
+                                        signal = "SELL" if spread_z > 0 else "BUY"
+                                        recommendations.append(f"🚨 **Active signal on Spread {coint_idx+1}**: {signal} (Z = {spread_z:+.2f})")
+                            else:
+                                findings.append("ℹ️ No cointegration found between selected assets")
+                        
+                        # 4. Current positioning
+                        extreme_assets = []
+                        for i, asset in enumerate(mr['assets']):
+                            z = z_scores[i]
+                            if abs(z) > 2:
+                                extreme_assets.append((get_display_name(asset), z))
+                        
+                        if extreme_assets:
+                            for asset, z in extreme_assets:
+                                if z > 2:
+                                    warnings.append(f"🔴 **{asset}** is {z:.1f}σ ABOVE equilibrium - potential mean-reversion SHORT")
+                                else:
+                                    findings.append(f"🟢 **{asset}** is {abs(z):.1f}σ BELOW equilibrium - potential mean-reversion LONG")
+                        
+                        # 5. Forecast insights
+                        if expected_return > 5:
+                            findings.append(f"📈 **{forecast_horizon}-day forecast** for {get_display_name(mr['assets'][forecast_asset_idx])}: +{expected_return:.1f}% expected return")
+                        elif expected_return < -5:
+                            warnings.append(f"📉 **{forecast_horizon}-day forecast** for {get_display_name(mr['assets'][forecast_asset_idx])}: {expected_return:.1f}% expected return")
+                        
+                        # Display
+                        if findings:
+                            st.markdown("### 📋 Key Findings")
+                            for f in findings:
+                                st.markdown(f"- {f}")
+                        
+                        if recommendations:
+                            st.markdown("### 💡 Recommendations")
+                            for i, r in enumerate(recommendations, 1):
+                                st.markdown(f"{i}. {r}")
+                        
+                        if warnings:
+                            st.markdown("### ⚠️ Warnings")
+                            for w in warnings:
+                                st.markdown(f"- {w}")
+                        
+                        # Risk disclaimer
+                        st.markdown("---")
+                        st.caption("""
+                        **Important Disclaimers:**
+                        
+                        1. **Model limitations:** VAR and O-U models assume linear dynamics and constant parameters. 
+                           Real markets exhibit regime changes, fat tails, and time-varying volatility.
+                        
+                        2. **Estimation uncertainty:** Parameters are estimated from historical data and subject to estimation error.
+                           Shorter samples = more uncertainty.
+                        
+                        3. **Cointegration can break:** Historical cointegration relationships may not persist in the future,
+                           especially during market stress or structural changes.
+                        
+                        4. **Not financial advice:** These tools are for educational and research purposes. 
+                           Always conduct your own analysis and consider risk management before trading.
+                        
+                        📖 *Methodology based on: Hamilton (1994), Engle & Granger (1987), Meucci (2005, 2010)*
+                        """)
+                        
+                        # Academic references
+                        with st.expander("📚 Academic References"):
+                            st.markdown("""
+                            **Core Methodology:**
+                            
+                            1. **Uhlenbeck, G.E. & Ornstein, L.S. (1930).** "On the Theory of Brownian Motion." 
+                               *Physical Review*, 36(5), 823-841.
+                            
+                            2. **Hamilton, J.D. (1994).** *Time Series Analysis.* Princeton University Press.
+                               - Chapters 10-11: VAR models
+                               - Chapter 19: Cointegration
+                            
+                            3. **Engle, R.F. & Granger, C.W.J. (1987).** "Co-Integration and Error Correction: 
+                               Representation, Estimation, and Testing." *Econometrica*, 55(2), 251-276.
+                            
+                            4. **Johansen, S. (1991).** "Estimation and Hypothesis Testing of Cointegration Vectors 
+                               in Gaussian Vector Autoregressive Models." *Econometrica*, 59(6), 1551-1580.
+                            
+                            5. **Meucci, A. (2005).** *Risk and Asset Allocation.* Springer.
+                               - Chapter 3: Modeling the market
+                               - Chapter 7: Estimating the distribution of the market invariants
+                            
+                            6. **Meucci, A. (2010).** "Historical Scenarios with Fully Flexible Probabilities." 
+                               *GARP Risk Professional*, December 2010.
+                            
+                            **Trading Applications:**
+                            
+                            7. **Vidyamurthy, G. (2004).** *Pairs Trading: Quantitative Methods and Analysis.* Wiley.
+                            
+                            8. **Pole, A. (2007).** *Statistical Arbitrage: Algorithmic Trading Insights and Techniques.* Wiley.
+                            
+                            9. **Avellaneda, M. & Lee, J.H. (2010).** "Statistical Arbitrage in the US Equities Market." 
+                               *Quantitative Finance*, 10(7), 761-782.
+                            """)        
+        
         
         # Part 7: Backtest Validation Tab
         # TAB 5: BACKTEST VALIDATION - COMPLETE REWRITE
