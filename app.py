@@ -3357,7 +3357,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
         # ================================================================
             # SECTION 2: PORTFOLIO CORRELATION DYNAMICS
             # ================================================================
-            else:  # analysis_mode == "🔗 Portfolio Correlation Dynamics"
+            elif:  # analysis_mode == "🔗 Portfolio Correlation Dynamics"
                 
                 st.markdown("""
                 ### What is this analysis for?
