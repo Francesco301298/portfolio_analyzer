@@ -3432,87 +3432,383 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                     st.warning("⚠️ Please select 10 or fewer assets for reliable estimation.")
                     
                 else:
-                    # Configuration
-                    with st.expander("⚙️ Model Settings", expanded=False):
+                    # ================================================================
+                    # CONFIGURATION: SEPARATED WINDOWS + ADVANCED SETTINGS
+                    # ================================================================
+                    with st.expander("⚙️ Model Settings", expanded=True):
+                        
+                        st.markdown("""
+                        **Important:** We separate two distinct time windows:
+                        - **Estimation Window**: For stable PCA structure and O-U parameters (longer)
+                        - **Trading Window**: For reactive Z-score signals (shorter)
+                        """)
+                        
                         col1, col2 = st.columns(2)
                         
                         with col1:
-                            tau_hl = st.slider(
-                                "Half-life (days)",
-                                min_value=30, max_value=252, value=120, step=10,
-                                key="dcc_halflife",
-                                help="How quickly old data loses importance. 120 days = data from 4 months ago has half the weight of today."
+                            st.markdown("##### 📊 Estimation Settings")
+                            
+                            estimation_window = st.slider(
+                                "Estimation Window (days)",
+                                min_value=126, max_value=756, value=252, step=21,
+                                help="Period for PCA and O-U parameter estimation. Longer = more stable structure."
                             )
-                            st.caption(f"With τ={tau_hl}: data from {tau_hl} days ago has 50% weight, {tau_hl*2} days ago has 25% weight")
+                            st.caption(f"≈ {estimation_window/252:.1f} years of data")
+                            
+                            n_components = st.slider(
+                                "Number of PCs to analyze",
+                                min_value=2, 
+                                max_value=min(n_selected, 10),
+                                value=min(n_selected, 5),
+                                help="PC1 is market factor. PC2+ are relative deviations."
+                            )
                         
                         with col2:
-                            nu_marginal = st.selectbox(
-                                "Distribution assumption",
-                                options=[("Normal (standard)", 1000), ("Student-t ν=6 (fat tails)", 6), ("Student-t ν=4 (fatter tails)", 4)],
-                                format_func=lambda x: x[0],
-                                index=0,
-                                key="dcc_nu",
-                                help="Student-t captures extreme events better but needs more data."
+                            st.markdown("##### 📡 Trading Settings")
+                            
+                            trading_window = st.slider(
+                                "Trading Window (days)",
+                                min_value=20, max_value=120, value=60, step=5,
+                                help="Period for Z-score calculation. Shorter = more reactive signals."
                             )
-                            nu = nu_marginal[1]
+                            st.caption(f"≈ {trading_window/21:.1f} months of data")
+                            
+                            zscore_threshold = st.slider(
+                                "Z-Score Threshold for Signals",
+                                min_value=1.0, max_value=3.0, value=1.5, step=0.25,
+                                help="Minimum |Z| to generate trading signal."
+                            )
+                        
+                        # Advanced settings
+                        with st.expander("🔬 Advanced Settings", expanded=False):
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                use_theoretical_zscore = st.checkbox(
+                                    "Also compute O-U Theoretical Z-Score",
+                                    value=True,
+                                    help="Compare rolling Z with theoretical for regime change detection"
+                                )
+                                
+                                check_cross_correlations = st.checkbox(
+                                    "Check cross-correlations (multivariate diagnostic)",
+                                    value=True,
+                                    help="Test if univariate O-U assumption is appropriate"
+                                )
+                            
+                            with col2:
+                                include_hmm = st.checkbox(
+                                    "Include HMM Regime Detection",
+                                    value=True,
+                                    help="Fit Hidden Markov Model to identify market regimes"
+                                )
+                                
+                                n_regimes = st.selectbox(
+                                    "Number of HMM Regimes",
+                                    options=[2, 3],
+                                    index=0,
+                                    help="2 = Calm/Panic, 3 = Calm/Normal/Panic"
+                                ) if include_hmm else 2
                     
-                    if st.button("🚀 Run Analysis", use_container_width=True, key="run_dcc"):
+                    if st.button("🚀 Run PCA Mean-Reversion Analysis", use_container_width=True, key="run_mr"):
                         
-                        n_assets = len(selected_dcc_assets)
-                        
-                        with st.spinner(f"Analyzing correlation dynamics for {n_assets} assets..."):
+                        with st.spinner("Running PCA and fitting O-U models..."):
                             
                             try:
-                                # Prepare returns data
-                                returns_dcc = analyzer.returns[selected_dcc_assets].dropna()
-                                t_bar = len(returns_dcc)
+                                # ============================================
+                                # STEP 1: PREPARE RETURNS DATA
+                                # ============================================
+                                prices_df = analyzer.data[selected_mr_assets].dropna()
                                 
-                                # Compute flexible probabilities
-                                p_flex = compute_flexible_probabilities(t_bar, tau_hl)
+                                # Use ESTIMATION window for structure
+                                if len(prices_df) > estimation_window:
+                                    prices_estimation = prices_df.iloc[-estimation_window:]
+                                else:
+                                    prices_estimation = prices_df
                                 
-                                # Extract GARCH residuals
-                                eps, cond_vols, garch_params = extract_garch_residuals(returns_dcc, p_flex)
+                                # Compute log-returns
+                                log_returns = np.log(prices_estimation / prices_estimation.shift(1)).dropna()
+                                returns_matrix = log_returns.values
+                                dates = log_returns.index
+                                T, N = returns_matrix.shape
                                 
-                                # Compute MLFP location-dispersion for each marginal
-                                mu_marg = np.zeros(n_assets)
-                                sigma2_marg = np.zeros(n_assets)
+                                # ============================================
+                                # STEP 2: APPLY PCA (on estimation window)
+                                # ============================================
+                                from sklearn.decomposition import PCA
+                                from sklearn.preprocessing import StandardScaler
                                 
-                                for i in range(n_assets):
-                                    mu_marg[i], sigma2_marg[i] = fit_locdisp_mlfp(eps[:, i], p=p_flex, nu=nu)
+                                # Standardize returns
+                                scaler = StandardScaler()
+                                returns_standardized = scaler.fit_transform(returns_matrix)
                                 
-                                # Transform to standard normal (copula approach)
-                                eps_tilde = np.zeros_like(eps)
-                                for i in range(n_assets):
-                                    u = t_dist.cdf(eps[:, i], df=nu, loc=mu_marg[i], scale=np.sqrt(sigma2_marg[i]))
-                                    u = np.clip(u, 1e-7, 1 - 1e-7)
-                                    eps_tilde[:, i] = t_dist.ppf(u, df=1000)
+                                # Fit PCA
+                                pca = PCA(n_components=n_components)
+                                factor_scores = pca.fit_transform(returns_standardized)  # T x K
+                                loadings = pca.components_.T  # N x K
+                                explained_variance = pca.explained_variance_ratio_
                                 
-                                # Compute unconditional correlation
-                                _, sigma2_eps_tilde = fit_locdisp_mlfp(eps_tilde, p=p_flex, nu=1000)
-                                rho2_uncond = np.diag(1/np.sqrt(np.diag(sigma2_eps_tilde))) @ sigma2_eps_tilde @ np.diag(1/np.sqrt(np.diag(sigma2_eps_tilde)))
+                                # ============================================
+                                # STEP 3: COMPUTE CUMULATIVE FACTOR SCORES
+                                # ============================================
+                                cumulative_scores = np.cumsum(factor_scores, axis=0)
                                 
-                                # Fit DCC model
-                                dcc_params, r2_t, eps_dcc, q2_final = fit_dcc_t(eps_tilde, p_flex, rho2=rho2_uncond)
+                                # ============================================
+                                # STEP 4: FIT O-U TO EACH FACTOR
+                                # Using ESTIMATION window for parameters
+                                # ============================================
+                                ou_results = []
                                 
-                                # Store results in session state
-                                st.session_state.dcc_results = {
-                                    'params': dcc_params,
-                                    'r2_t': r2_t,
-                                    'rho2_uncond': rho2_uncond,
-                                    'eps': eps,
-                                    'eps_tilde': eps_tilde,
-                                    'cond_vols': cond_vols,
-                                    'garch_params': garch_params,
-                                    'dates': returns_dcc.index,
-                                    'assets': selected_dcc_assets,
-                                    'q2_final': q2_final
+                                for k in range(n_components):
+                                    f_k = cumulative_scores[:, k]
+                                    
+                                    # Fit AR(1): f_t = alpha + beta * f_{t-1} + eps
+                                    f_lag = f_k[:-1]
+                                    f_current = f_k[1:]
+                                    
+                                    # OLS regression
+                                    X = np.column_stack([np.ones(len(f_lag)), f_lag])
+                                    beta_ols = np.linalg.lstsq(X, f_current, rcond=None)[0]
+                                    alpha, beta = beta_ols[0], beta_ols[1]
+                                    
+                                    # O-U parameters
+                                    if 0 < beta < 1:
+                                        kappa = -np.log(beta)
+                                        half_life = np.log(2) / kappa
+                                        mu = alpha / (1 - beta)
+                                    elif beta <= 0:
+                                        kappa = -np.log(abs(beta)) if abs(beta) > 0.01 else 10
+                                        half_life = np.log(2) / kappa
+                                        mu = 0
+                                    else:
+                                        kappa = 0
+                                        half_life = np.inf
+                                        mu = np.mean(f_k)
+                                    
+                                    # Residual volatility (sigma of innovations)
+                                    residuals = f_current - (alpha + beta * f_lag)
+                                    sigma = np.std(residuals)
+                                    
+                                    # ============================================
+                                    # Z-SCORES: Both Rolling (trading window) and Theoretical
+                                    # ============================================
+                                    current_value = f_k[-1]
+                                    
+                                    # ROLLING Z-score (using TRADING window)
+                                    trading_len = min(trading_window, len(f_k))
+                                    rolling_mean = np.mean(f_k[-trading_len:])
+                                    rolling_std = np.std(f_k[-trading_len:])
+                                    z_score_rolling = (current_value - rolling_mean) / rolling_std if rolling_std > 0 else 0
+                                    
+                                    # THEORETICAL O-U Z-score
+                                    # Stationary variance = sigma^2 / (2*kappa)
+                                    if kappa > 0.001:
+                                        sigma_stationary = sigma / np.sqrt(2 * kappa)
+                                        z_score_theoretical = (current_value - mu) / sigma_stationary if sigma_stationary > 0 else 0
+                                    else:
+                                        sigma_stationary = rolling_std
+                                        z_score_theoretical = z_score_rolling
+                                    
+                                    # Z-score divergence (regime change indicator)
+                                    z_divergence = abs(z_score_rolling - z_score_theoretical)
+                                    
+                                    ou_results.append({
+                                        'pc': k + 1,
+                                        'kappa': kappa,
+                                        'half_life': half_life,
+                                        'mu': mu,
+                                        'sigma': sigma,
+                                        'sigma_stationary': sigma_stationary,
+                                        'beta': beta,
+                                        'current_value': current_value,
+                                        'z_score_rolling': z_score_rolling,
+                                        'z_score_theoretical': z_score_theoretical,
+                                        'z_divergence': z_divergence,
+                                        'explained_var': explained_variance[k],
+                                        'is_mean_reverting': 0 < beta < 0.99,
+                                        'series': f_k
+                                    })
+                                
+                                # ============================================
+                                # STEP 5: CROSS-CORRELATION DIAGNOSTIC
+                                # Test if univariate O-U is appropriate
+                                # ============================================
+                                cross_corr_matrix = None
+                                univariate_appropriate = True
+                                
+                                if check_cross_correlations and n_components >= 2:
+                                    cross_corr_matrix = np.zeros((n_components, n_components))
+                                    
+                                    for i in range(n_components):
+                                        for j in range(n_components):
+                                            # Correlation of PC_i(t) with PC_j(t+1)
+                                            corr = np.corrcoef(
+                                                cumulative_scores[:-1, i], 
+                                                cumulative_scores[1:, j]
+                                            )[0, 1]
+                                            cross_corr_matrix[i, j] = corr
+                                    
+                                    # Check off-diagonal elements
+                                    off_diag = cross_corr_matrix.copy()
+                                    np.fill_diagonal(off_diag, 0)
+                                    max_off_diag = np.max(np.abs(off_diag))
+                                    univariate_appropriate = max_off_diag < 0.15
+                                
+                                # ============================================
+                                # STEP 6: REGIME STABILITY METRICS
+                                # ============================================
+                                mr_factors = [r for r in ou_results[1:] if r['is_mean_reverting']]
+                                
+                                n_mr_factors = len(mr_factors)
+                                median_half_life = np.median([r['half_life'] for r in mr_factors]) if mr_factors else np.inf
+                                pc1_dominance = explained_variance[0]
+                                
+                                # Mean Z-divergence (regime change indicator)
+                                mean_z_divergence = np.mean([r['z_divergence'] for r in ou_results])
+                                
+                                # Stability Score (0-100)
+                                # Higher = better for stat-arb
+                                score_mr_factors = min(n_mr_factors / (n_components - 1), 1) * 30  # max 30 pts
+                                score_half_life = max(0, 30 - median_half_life) if median_half_life != np.inf else 0  # max 30 pts
+                                score_pc1 = (1 - pc1_dominance) * 25  # max 25 pts (lower PC1 = better)
+                                score_z_stability = max(0, 15 - mean_z_divergence * 10)  # max 15 pts
+                                
+                                stability_score = score_mr_factors + score_half_life + score_pc1 + score_z_stability
+                                stability_score = min(100, max(0, stability_score))
+                                
+                                regime_stability = {
+                                    'n_mr_factors': n_mr_factors,
+                                    'total_factors': n_components - 1,
+                                    'median_half_life': median_half_life,
+                                    'pc1_dominance': pc1_dominance,
+                                    'mean_z_divergence': mean_z_divergence,
+                                    'stability_score': stability_score,
+                                    'cross_corr_matrix': cross_corr_matrix,
+                                    'univariate_appropriate': univariate_appropriate
+                                }
+                                
+                                # ============================================
+                                # STEP 7: HMM REGIME DETECTION (if enabled)
+                                # ============================================
+                                hmm_results = None
+                                
+                                if include_hmm:
+                                    try:
+                                        from hmmlearn.hmm import GaussianHMM
+                                        
+                                        # Use portfolio returns (equal-weighted) for HMM
+                                        portfolio_returns = np.mean(returns_matrix, axis=1).reshape(-1, 1)
+                                        
+                                        # Fit HMM
+                                        hmm_model = GaussianHMM(
+                                            n_components=n_regimes, 
+                                            covariance_type='full',
+                                            n_iter=1000,
+                                            random_state=42
+                                        )
+                                        hmm_model.fit(portfolio_returns)
+                                        
+                                        # Get hidden states
+                                        hidden_states = hmm_model.predict(portfolio_returns)
+                                        state_probs = hmm_model.predict_proba(portfolio_returns)
+                                        
+                                        # Rearrange states by volatility (low to high)
+                                        state_volatilities = []
+                                        for s in range(n_regimes):
+                                            state_returns = portfolio_returns[hidden_states == s]
+                                            state_volatilities.append(np.std(state_returns) if len(state_returns) > 0 else 0)
+                                        
+                                        vol_order = np.argsort(state_volatilities)
+                                        
+                                        # Reorder states
+                                        state_mapping = {old: new for new, old in enumerate(vol_order)}
+                                        hidden_states_ordered = np.array([state_mapping[s] for s in hidden_states])
+                                        
+                                        # Reorder transition matrix
+                                        trans_matrix = hmm_model.transmat_[np.ix_(vol_order, vol_order)]
+                                        
+                                        # State characteristics
+                                        state_chars = []
+                                        state_names = ['Calm', 'Panic'] if n_regimes == 2 else ['Calm', 'Normal', 'Panic']
+                                        
+                                        for s in range(n_regimes):
+                                            original_state = vol_order[s]
+                                            state_mask = hidden_states == original_state
+                                            state_returns = portfolio_returns[state_mask].flatten()
+                                            
+                                            state_chars.append({
+                                                'state': s,
+                                                'name': state_names[s],
+                                                'mean_return': np.mean(state_returns) * 252 if len(state_returns) > 0 else 0,
+                                                'volatility': np.std(state_returns) * np.sqrt(252) * 100 if len(state_returns) > 0 else 0,
+                                                'frequency': np.mean(state_mask) * 100,
+                                                'n_days': np.sum(state_mask)
+                                            })
+                                        
+                                        # Current regime
+                                        current_regime = hidden_states_ordered[-1]
+                                        current_regime_prob = state_probs[-1, vol_order[current_regime]]
+                                        
+                                        hmm_results = {
+                                            'model': hmm_model,
+                                            'hidden_states': hidden_states_ordered,
+                                            'state_probs': state_probs,
+                                            'trans_matrix': trans_matrix,
+                                            'state_chars': state_chars,
+                                            'state_names': state_names,
+                                            'current_regime': current_regime,
+                                            'current_regime_name': state_names[current_regime],
+                                            'current_regime_prob': current_regime_prob,
+                                            'vol_order': vol_order
+                                        }
+                                        
+                                    except ImportError:
+                                        st.warning("⚠️ hmmlearn not installed. Run: pip install hmmlearn")
+                                        hmm_results = None
+                                    except Exception as e:
+                                        st.warning(f"⚠️ HMM fitting failed: {str(e)}")
+                                        hmm_results = None
+                                
+                                # ============================================
+                                # STEP 8: ASSET CONTRIBUTIONS
+                                # ============================================
+                                asset_contributions = []
+                                for i, asset in enumerate(selected_mr_assets):
+                                    contrib = {'asset': asset}
+                                    for k in range(n_components):
+                                        contrib[f'PC{k+1}_loading'] = loadings[i, k]
+                                        contrib[f'PC{k+1}_contrib'] = loadings[i, k] * ou_results[k]['current_value']
+                                    asset_contributions.append(contrib)
+                                
+                                # ============================================
+                                # STORE ALL RESULTS
+                                # ============================================
+                                st.session_state.mr_results = {
+                                    'ou_results': ou_results,
+                                    'loadings': loadings,
+                                    'factor_scores': factor_scores,
+                                    'cumulative_scores': cumulative_scores,
+                                    'explained_variance': explained_variance,
+                                    'asset_contributions': asset_contributions,
+                                    'dates': dates,
+                                    'assets': selected_mr_assets,
+                                    'returns_matrix': returns_matrix,
+                                    'n_components': n_components,
+                                    'estimation_window': estimation_window,
+                                    'trading_window': trading_window,
+                                    'zscore_threshold': zscore_threshold,
+                                    'regime_stability': regime_stability,
+                                    'hmm_results': hmm_results,
+                                    'use_theoretical_zscore': use_theoretical_zscore
                                 }
                                 
                                 st.success("✅ Analysis complete!")
                                 
                             except Exception as e:
                                 st.error(f"❌ Analysis failed: {str(e)}")
-                                st.session_state.dcc_results = None
+                                import traceback
+                                st.code(traceback.format_exc())
+                                st.session_state.mr_results = None
                     
                     # Display results if available
                     if 'dcc_results' in st.session_state and st.session_state.dcc_results is not None:
@@ -4382,6 +4678,544 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             """)
                         
                         st.markdown("---")
+                        # ============================================================
+                        # SECTION 0: REGIME STABILITY & HMM DASHBOARD
+                        # ============================================================
+                        st.markdown("## 🌡️ Regime Analysis")
+                        
+                        regime_stability = mr['regime_stability']
+                        hmm_results = mr.get('hmm_results', None)
+                        
+                        # ----- REGIME STABILITY METRICS -----
+                        st.markdown("### 📊 Regime Stability Metrics")
+                        
+                        st.markdown("""
+                        These metrics indicate whether the current market environment is **favorable for statistical arbitrage**.
+                        Higher stability score = more mean-reversion opportunities.
+                        """)
+                        
+                        # Main stability score gauge
+                        col1, col2, col3, col4, col5 = st.columns(5)
+                        
+                        stability_score = regime_stability['stability_score']
+                        
+                        with col1:
+                            if stability_score >= 70:
+                                score_color = "#4ECDC4"
+                                score_label = "FAVORABLE"
+                            elif stability_score >= 40:
+                                score_color = "#FFE66D"
+                                score_label = "NEUTRAL"
+                            else:
+                                score_color = "#FF6B6B"
+                                score_label = "UNFAVORABLE"
+                            
+                            st.markdown(f"""
+                            <div style='text-align: center; padding: 1rem; 
+                                        background: {score_color}22; border-radius: 12px;
+                                        border: 2px solid {score_color};'>
+                                <div style='font-size: 2rem; font-weight: bold; color: {score_color};'>
+                                    {stability_score:.0f}
+                                </div>
+                                <div style='color: #94a3b8; font-size: 0.8rem;'>STABILITY SCORE</div>
+                                <div style='color: {score_color}; font-size: 0.9rem; font-weight: bold;'>{score_label}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        
+                        with col2:
+                            st.metric(
+                                "Mean-Reverting Factors",
+                                f"{regime_stability['n_mr_factors']}/{regime_stability['total_factors']}",
+                                help="Factors (excl. PC1) showing mean-reversion"
+                            )
+                        
+                        with col3:
+                            median_hl = regime_stability['median_half_life']
+                            st.metric(
+                                "Median Half-Life",
+                                f"{median_hl:.1f}d" if median_hl != np.inf else "∞",
+                                delta="Fast" if median_hl < 20 else "Slow" if median_hl < 60 else "Very Slow",
+                                delta_color="normal" if median_hl < 30 else "inverse"
+                            )
+                        
+                        with col4:
+                            pc1_dom = regime_stability['pc1_dominance'] * 100
+                            st.metric(
+                                "PC1 Dominance",
+                                f"{pc1_dom:.1f}%",
+                                delta="Low" if pc1_dom < 50 else "High",
+                                delta_color="normal" if pc1_dom < 50 else "inverse",
+                                help="High = assets move together, less stat-arb opportunity"
+                            )
+                        
+                        with col5:
+                            z_div = regime_stability['mean_z_divergence']
+                            st.metric(
+                                "Z-Score Stability",
+                                f"{z_div:.2f}",
+                                delta="Stable" if z_div < 0.5 else "Unstable",
+                                delta_color="normal" if z_div < 0.5 else "inverse",
+                                help="Divergence between rolling and theoretical Z-scores"
+                            )
+                        
+                        # Stability interpretation
+                        if stability_score >= 70:
+                            st.success(f"""
+                            **✅ Market regime is FAVORABLE for statistical arbitrage**
+                            
+                            - Multiple factors show mean-reversion
+                            - Half-lives are short enough for active trading
+                            - Diversification is working (PC1 doesn't dominate)
+                            - Model parameters are stable
+                            
+                            **Recommendation:** Proceed with factor-based trading signals.
+                            """)
+                        elif stability_score >= 40:
+                            st.warning(f"""
+                            **⚠️ Market regime is NEUTRAL**
+                            
+                            Some stat-arb opportunities exist, but conditions are not ideal.
+                            
+                            **Recommendation:** Trade selectively, focus on strongest signals only.
+                            """)
+                        else:
+                            st.error(f"""
+                            **❌ Market regime is UNFAVORABLE for statistical arbitrage**
+                            
+                            Possible reasons:
+                            - High correlation regime (all assets moving together)
+                            - Slow mean-reversion (half-lives too long)
+                            - Model instability (parameters changing)
+                            
+                            **Recommendation:** Reduce exposure to stat-arb strategies. Wait for regime change.
+                            """)
+                        
+                        st.markdown("---")
+                        
+                        # ----- CROSS-CORRELATION DIAGNOSTIC -----
+                        if regime_stability['cross_corr_matrix'] is not None:
+                            st.markdown("### 🔗 Cross-Correlation Diagnostic")
+                            
+                            st.markdown("""
+                            This tests whether the **univariate O-U assumption** is appropriate.
+                            We check if factor $PC_i(t)$ predicts $PC_j(t+1)$ for $i \\neq j$.
+                            
+                            - **Diagonal**: Own autocorrelation (should be high for mean-reversion)
+                            - **Off-diagonal**: Cross-factor spillovers (should be low for univariate O-U)
+                            """)
+                            
+                            col1, col2 = st.columns([1.5, 1])
+                            
+                            with col1:
+                                cross_corr = regime_stability['cross_corr_matrix']
+                                
+                                fig_cross = go.Figure(data=go.Heatmap(
+                                    z=cross_corr,
+                                    x=[f'PC{i+1}(t+1)' for i in range(n_components)],
+                                    y=[f'PC{i+1}(t)' for i in range(n_components)],
+                                    colorscale='RdBu_r',
+                                    zmid=0,
+                                    zmin=-1, zmax=1,
+                                    text=np.round(cross_corr, 3),
+                                    texttemplate='%{text}',
+                                    textfont=dict(size=10),
+                                    hovertemplate='%{y} → %{x}<br>Correlation: %{z:.3f}<extra></extra>',
+                                    colorbar=dict(title='ρ')
+                                ))
+                                
+                                fig_cross.update_layout(
+                                    height=300,
+                                    title="Lagged Cross-Correlation Matrix",
+                                    xaxis_title="Tomorrow",
+                                    yaxis_title="Today",
+                                    yaxis=dict(autorange='reversed')
+                                )
+                                fig_cross = apply_plotly_theme(fig_cross)
+                                st.plotly_chart(fig_cross, use_container_width=True)
+                            
+                            with col2:
+                                st.markdown("##### Diagnostic Result")
+                                
+                                # Extract off-diagonal max
+                                off_diag = cross_corr.copy()
+                                np.fill_diagonal(off_diag, 0)
+                                max_off_diag = np.max(np.abs(off_diag))
+                                
+                                if regime_stability['univariate_appropriate']:
+                                    st.success(f"""
+                                    **✅ Univariate O-U is appropriate**
+                                    
+                                    Max off-diagonal: {max_off_diag:.3f} < 0.15
+                                    
+                                    Factors are dynamically independent.
+                                    No need for multivariate O-U.
+                                    """)
+                                else:
+                                    st.warning(f"""
+                                    **⚠️ Consider multivariate O-U**
+                                    
+                                    Max off-diagonal: {max_off_diag:.3f} ≥ 0.15
+                                    
+                                    Some factors influence each other with lag.
+                                    Signals may be less reliable.
+                                    """)
+                                
+                                # Show strongest cross-effects
+                                st.markdown("##### Strongest Cross-Effects")
+                                
+                                cross_effects = []
+                                for i in range(n_components):
+                                    for j in range(n_components):
+                                        if i != j and abs(cross_corr[i, j]) > 0.05:
+                                            cross_effects.append({
+                                                'From': f'PC{i+1}',
+                                                'To': f'PC{j+1}',
+                                                'ρ': cross_corr[i, j]
+                                            })
+                                
+                                if cross_effects:
+                                    cross_effects.sort(key=lambda x: abs(x['ρ']), reverse=True)
+                                    for ce in cross_effects[:3]:
+                                        direction = "→" if ce['ρ'] > 0 else "⇄"
+                                        st.markdown(f"- {ce['From']} {direction} {ce['To']}: **{ce['ρ']:+.3f}**")
+                                else:
+                                    st.markdown("*No significant cross-effects*")
+                            
+                            st.markdown("---")
+                        
+                        # ----- DUAL Z-SCORE COMPARISON -----
+                        if mr.get('use_theoretical_zscore', False):
+                            st.markdown("### 📐 Z-Score Comparison: Rolling vs Theoretical")
+                            
+                            st.markdown("""
+                            Comparing **rolling Z-score** (adaptive) with **O-U theoretical Z-score** (model-based).
+                            
+                            - **Agreement**: Model is well-specified, parameters are stable
+                            - **Divergence**: Possible regime change or model misspecification
+                            """)
+                            
+                            # Table of Z-scores
+                            zscore_data = []
+                            for r in ou_results:
+                                zscore_data.append({
+                                    'Factor': f"PC{r['pc']}",
+                                    'Z Rolling': f"{r['z_score_rolling']:+.2f}σ",
+                                    'Z Theoretical': f"{r['z_score_theoretical']:+.2f}σ",
+                                    'Divergence': f"{r['z_divergence']:.2f}σ",
+                                    'Agreement': "✅" if r['z_divergence'] < 0.5 else "⚠️" if r['z_divergence'] < 1.0 else "❌"
+                                })
+                            
+                            st.markdown(create_styled_table(pd.DataFrame(zscore_data)), unsafe_allow_html=True)
+                            
+                            # Visual comparison
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                fig_zcomp = go.Figure()
+                                
+                                pcs = [f"PC{r['pc']}" for r in ou_results]
+                                z_rolling = [r['z_score_rolling'] for r in ou_results]
+                                z_theoretical = [r['z_score_theoretical'] for r in ou_results]
+                                
+                                fig_zcomp.add_trace(go.Bar(
+                                    x=pcs, y=z_rolling,
+                                    name='Rolling Z',
+                                    marker_color='#6366F1'
+                                ))
+                                
+                                fig_zcomp.add_trace(go.Bar(
+                                    x=pcs, y=z_theoretical,
+                                    name='Theoretical Z',
+                                    marker_color='#FFE66D'
+                                ))
+                                
+                                fig_zcomp.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+                                fig_zcomp.add_hline(y=2, line_dash="dot", line_color="#FF6B6B", 
+                                                   annotation_text="+2σ")
+                                fig_zcomp.add_hline(y=-2, line_dash="dot", line_color="#4ECDC4",
+                                                   annotation_text="-2σ")
+                                
+                                fig_zcomp.update_layout(
+                                    height=300,
+                                    title="Z-Score Comparison",
+                                    xaxis_title="Factor",
+                                    yaxis_title="Z-Score",
+                                    barmode='group',
+                                    legend=dict(orientation="h", yanchor="bottom", y=1.02)
+                                )
+                                fig_zcomp = apply_plotly_theme(fig_zcomp)
+                                st.plotly_chart(fig_zcomp, use_container_width=True)
+                            
+                            with col2:
+                                # Interpretation
+                                high_divergence = [r for r in ou_results if r['z_divergence'] > 0.75]
+                                
+                                if not high_divergence:
+                                    st.success("""
+                                    **✅ Z-scores agree well**
+                                    
+                                    Rolling and theoretical Z-scores are aligned.
+                                    Model parameters appear stable.
+                                    Trading signals are reliable.
+                                    """)
+                                else:
+                                    st.warning(f"""
+                                    **⚠️ Z-score divergence detected**
+                                    
+                                    Factors with high divergence: {', '.join([f"PC{r['pc']}" for r in high_divergence])}
+                                    
+                                    This suggests:
+                                    - Recent regime change
+                                    - Model parameters outdated
+                                    - Use rolling Z for trading (more adaptive)
+                                    """)
+                                
+                                st.markdown("""
+                                **Which Z to use?**
+                                - **Rolling Z**: More reactive, better for regime changes
+                                - **Theoretical Z**: More stable, better for steady regimes
+                                
+                                *Recommendation: Use rolling Z for trading, theoretical for validation.*
+                                """)
+                            
+                            st.markdown("---")
+                        
+                        # ----- HMM REGIME MAP -----
+                        if hmm_results is not None:
+                            st.markdown("## 🗺️ HMM Regime Map")
+                            
+                            st.markdown("""
+                            The **Hidden Markov Model** identifies latent market regimes based on return dynamics.
+                            
+                            - **Calm**: Low volatility, normal correlations, stat-arb works well
+                            - **Panic**: High volatility, elevated correlations, stat-arb is risky
+                            """)
+                            
+                            # Current regime banner
+                            current_regime = hmm_results['current_regime']
+                            current_name = hmm_results['current_regime_name']
+                            current_prob = hmm_results['current_regime_prob']
+                            
+                            if current_name == 'Calm':
+                                regime_color = "#4ECDC4"
+                                regime_icon = "😌"
+                            elif current_name == 'Panic':
+                                regime_color = "#FF6B6B"
+                                regime_icon = "😰"
+                            else:  # Normal
+                                regime_color = "#FFE66D"
+                                regime_icon = "😐"
+                            
+                            st.markdown(f"""
+                            <div style='background: linear-gradient(135deg, {regime_color}33, {regime_color}11); 
+                                        border-left: 4px solid {regime_color}; padding: 1.5rem; 
+                                        border-radius: 12px; margin-bottom: 1rem;'>
+                                <div style='display: flex; align-items: center; gap: 1rem;'>
+                                    <span style='font-size: 3rem;'>{regime_icon}</span>
+                                    <div>
+                                        <div style='font-size: 0.9rem; color: #94a3b8;'>CURRENT REGIME</div>
+                                        <div style='font-size: 1.8rem; font-weight: bold; color: {regime_color};'>
+                                            {current_name.upper()}
+                                        </div>
+                                        <div style='color: #E2E8F0;'>Probability: {current_prob*100:.1f}%</div>
+                                    </div>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            # Regime characteristics
+                            st.markdown("### 📈 Regime Characteristics")
+                            
+                            col1, col2 = st.columns([1.5, 1])
+                            
+                            with col1:
+                                # Regime timeline
+                                st.markdown("##### Regime History")
+                                
+                                hidden_states = hmm_results['hidden_states']
+                                state_names = hmm_results['state_names']
+                                n_regimes = len(state_names)
+                                
+                                # Color map
+                                if n_regimes == 2:
+                                    colors_map = {0: '#4ECDC4', 1: '#FF6B6B'}
+                                else:
+                                    colors_map = {0: '#4ECDC4', 1: '#FFE66D', 2: '#FF6B6B'}
+                                
+                                fig_timeline = go.Figure()
+                                
+                                # Plot returns colored by regime
+                                portfolio_returns = np.mean(mr['returns_matrix'], axis=1)
+                                
+                                for s in range(n_regimes):
+                                    mask = hidden_states == s
+                                    returns_state = portfolio_returns.copy()
+                                    returns_state[~mask] = np.nan
+                                    
+                                    fig_timeline.add_trace(go.Scatter(
+                                        x=dates,
+                                        y=returns_state,
+                                        mode='markers',
+                                        name=state_names[s],
+                                        marker=dict(color=colors_map[s], size=4),
+                                        hovertemplate=f'{state_names[s]}<br>Return: %{{y:.4f}}<extra></extra>'
+                                    ))
+                                
+                                fig_timeline.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+                                
+                                fig_timeline.update_layout(
+                                    height=300,
+                                    xaxis_title="Date",
+                                    yaxis_title="Portfolio Return",
+                                    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                                    hovermode='x unified'
+                                )
+                                fig_timeline = apply_plotly_theme(fig_timeline)
+                                st.plotly_chart(fig_timeline, use_container_width=True)
+                            
+                            with col2:
+                                # Regime stats table
+                                st.markdown("##### Regime Statistics")
+                                
+                                regime_stats = []
+                                for sc in hmm_results['state_chars']:
+                                    regime_stats.append({
+                                        'Regime': f"{sc['name']}",
+                                        'Volatility': f"{sc['volatility']:.1f}%",
+                                        'Frequency': f"{sc['frequency']:.1f}%",
+                                        'Days': f"{sc['n_days']}"
+                                    })
+                                
+                                st.markdown(create_styled_table(pd.DataFrame(regime_stats)), unsafe_allow_html=True)
+                                
+                                # Current regime probability pie
+                                st.markdown("##### Current Regime Probability")
+                                
+                                current_probs = hmm_results['state_probs'][-1]
+                                vol_order = hmm_results['vol_order']
+                                
+                                fig_pie = go.Figure(data=[go.Pie(
+                                    labels=[state_names[i] for i in range(n_regimes)],
+                                    values=[current_probs[vol_order[i]] for i in range(n_regimes)],
+                                    marker_colors=[colors_map[i] for i in range(n_regimes)],
+                                    hole=0.4,
+                                    textinfo='label+percent',
+                                    textfont=dict(size=11)
+                                )])
+                                
+                                fig_pie.update_layout(
+                                    height=200,
+                                    showlegend=False,
+                                    margin=dict(t=20, b=20, l=20, r=20)
+                                )
+                                fig_pie = apply_plotly_theme(fig_pie)
+                                st.plotly_chart(fig_pie, use_container_width=True)
+                            
+                            # Transition matrix
+                            st.markdown("### 🔄 Regime Transition Probabilities")
+                            
+                            col1, col2 = st.columns([1, 1])
+                            
+                            with col1:
+                                trans_matrix = hmm_results['trans_matrix']
+                                
+                                fig_trans = go.Figure(data=go.Heatmap(
+                                    z=trans_matrix,
+                                    x=[f"To: {state_names[i]}" for i in range(n_regimes)],
+                                    y=[f"From: {state_names[i]}" for i in range(n_regimes)],
+                                    colorscale='Blues',
+                                    zmin=0, zmax=1,
+                                    text=np.round(trans_matrix * 100, 1),
+                                    texttemplate='%{text}%',
+                                    textfont=dict(size=12),
+                                    hovertemplate='%{y} → %{x}<br>Probability: %{z:.1%}<extra></extra>',
+                                    colorbar=dict(title='P')
+                                ))
+                                
+                                fig_trans.update_layout(
+                                    height=250,
+                                    title="Daily Transition Matrix",
+                                    yaxis=dict(autorange='reversed')
+                                )
+                                fig_trans = apply_plotly_theme(fig_trans)
+                                st.plotly_chart(fig_trans, use_container_width=True)
+                            
+                            with col2:
+                                st.markdown("##### Transition Interpretation")
+                                
+                                # Persistence probabilities
+                                for s in range(n_regimes):
+                                    persistence = trans_matrix[s, s]
+                                    expected_duration = 1 / (1 - persistence) if persistence < 1 else np.inf
+                                    
+                                    st.markdown(f"""
+                                    **{state_names[s]}** regime:
+                                    - Persistence: {persistence*100:.1f}%
+                                    - Expected duration: {expected_duration:.0f} days
+                                    """)
+                                
+                                # Tomorrow's forecast
+                                st.markdown("##### Tomorrow's Forecast")
+                                
+                                tomorrow_probs = trans_matrix[current_regime, :]
+                                
+                                for s in range(n_regimes):
+                                    prob = tomorrow_probs[s]
+                                    bar_width = prob * 100
+                                    st.markdown(f"""
+                                    <div style='display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.3rem;'>
+                                        <span style='width: 60px; color: #94a3b8;'>{state_names[s]}</span>
+                                        <div style='flex: 1; background: #1e293b; border-radius: 4px; height: 20px;'>
+                                            <div style='width: {bar_width}%; background: {colors_map[s]}; 
+                                                        height: 100%; border-radius: 4px;'></div>
+                                        </div>
+                                        <span style='width: 50px; text-align: right;'>{prob*100:.1f}%</span>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            
+                            # Trading implications
+                            st.markdown("### 💼 Trading Implications")
+                            
+                            if current_name == 'Calm':
+                                st.success("""
+                                **✅ CALM regime - Favorable for stat-arb**
+                                
+                                - Mean-reversion strategies work well
+                                - Correlations are normal
+                                - Use full position sizing
+                                - Factor signals are reliable
+                                """)
+                            elif current_name == 'Panic':
+                                st.error("""
+                                **❌ PANIC regime - Unfavorable for stat-arb**
+                                
+                                - High correlations → diversification breaks down
+                                - Volatility elevated → wider stop-losses needed
+                                - Mean-reversion may fail → factors can diverge further
+                                - **Recommendation: Reduce positions by 50-75%**
+                                """)
+                            else:  # Normal
+                                st.warning("""
+                                **⚠️ NORMAL regime - Proceed with caution**
+                                
+                                - Transitional state
+                                - Monitor for shift to Calm or Panic
+                                - Use moderate position sizing
+                                """)
+                            
+                            st.markdown("---")
+                        
+                        else:
+                            # HMM not enabled or failed
+                            if mr.get('hmm_results') is None and 'include_hmm' in dir():
+                                st.info("""
+                                **ℹ️ HMM Regime Detection not enabled**
+                                
+                                Enable it in Model Settings to identify market regimes.
+                                """)
+                        
+                        st.markdown("---")
+                        
                         
                         # ============================================================
                         # SECTION 1: PCA OVERVIEW
