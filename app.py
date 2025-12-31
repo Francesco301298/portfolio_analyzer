@@ -43,11 +43,9 @@ from core.backtesting import combinatorial_purged_cv
 from core.backtesting import run_cpcv_backtest
 from core.backtesting import compute_pbo
 
-from econometrics.backtesting.engine import (
-    PCAOUBacktester,
-    BacktestConfig,
-    BacktestResults
-)
+from econometrics.backtesting.engine import PCAOUBacktester
+from econometrics.backtesting.engine import BacktestConfig
+from econometrics.backtesting.engine import BacktestResults
 
 
 warnings.filterwarnings('ignore')
