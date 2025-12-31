@@ -3442,7 +3442,8 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             half_life = st.slider(
                                 "Half-life for Flexible Probabilities (days)",
                                 min_value=21, max_value=252, value=126, step=21,
-                                help="How quickly old observations lose weight. Shorter = more reactive to recent data."
+                                help="How quickly old observations lose weight. Shorter = more reactive to recent data.",
+                                key="dcc_half_life"
                             )
                             st.caption(f"τ = {half_life} days → observations from {half_life*2:.0f} days ago have ~25% weight")
                         
@@ -3450,7 +3451,8 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             dcc_lookback = st.slider(
                                 "Lookback period (days)",
                                 min_value=252, max_value=1260, value=504, step=126,
-                                help="How much history to use for DCC estimation"
+                                help="How much history to use for DCC estimation",
+                                key="dcc_lookback"
                             )
                             st.caption(f"≈ {dcc_lookback/252:.1f} years of data")
                     
@@ -4614,7 +4616,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             fastest_pc = None
                         
                         # Find most extreme z-score (potential trading opportunity)
-                        extreme_factor = max(ou_results[1:], key=lambda x: abs(x['z_score']))  # Skip PC1
+                        extreme_factor = max(ou_results[1:], key=lambda x: abs(x['z_score_rolling']))  # Skip PC1
                         
                         col1, col2, col3, col4 = st.columns(4)
                         
@@ -4644,7 +4646,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                                 st.metric("Fastest Half-Life", "N/A", "No mean-reversion")
                         
                         with col4:
-                            z_val = extreme_factor['z_score']
+                            z_val = extreme_factor['z_score_rolling']
                             st.metric(
                                 "Most Extreme Z-Score",
                                 f"{z_val:+.2f}σ",
@@ -4654,13 +4656,13 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             )
                         
                         # Trading opportunity alert
-                        if abs(extreme_factor['z_score']) > 2 and extreme_factor['is_mean_reverting']:
+                        if abs(extreme_factor['z_score_rolling']) > 2 and extreme_factor['is_mean_reverting']:
                             st.success(f"""
                             **🚨 Potential Trading Opportunity Detected!**
                             
-                            PC{extreme_factor['pc']} has Z-score = {extreme_factor['z_score']:+.2f}σ with half-life = {extreme_factor['half_life']:.1f} days.
+                            PC{extreme_factor['pc']} has Z-score = {extreme_factor['z_score_rolling']:+.2f}σ with half-life = {extreme_factor['half_life']:.1f} days.
                             
-                            This suggests a **{"positive" if extreme_factor['z_score'] > 0 else "negative"} deviation** from the normal factor structure 
+                            This suggests a **{"positive" if extreme_factor['z_score_rolling'] > 0 else "negative"} deviation** from the normal factor structure 
                             that historically reverts. See detailed analysis below.
                             """)
                         
@@ -5326,7 +5328,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                                 'κ (speed)': f"{r['kappa']:.4f}" if r['kappa'] > 0 else "N/A",
                                 'Half-Life': f"{r['half_life']:.1f}d" if r['half_life'] != np.inf else "∞",
                                 'β (AR1)': f"{r['beta']:.4f}",
-                                'Current Z': f"{r['z_score']:+.2f}σ",
+                                'Current Z': f"{r['z_score_rolling']:+.2f}σ",
                                 'Mean-Reverts?': "✅ Yes" if r['is_mean_reverting'] else "❌ No",
                                 'Tradable?': "🟢" if r['is_mean_reverting'] and r['half_life'] < 30 else "🟡" if r['is_mean_reverting'] else "🔴"
                             })
@@ -5380,9 +5382,9 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                                     )
                                     
                                     # ±2σ bands based on rolling window
-                                    if len(f_series) > mr['zscore_window']:
-                                        rolling_mean = pd.Series(f_series).rolling(mr['zscore_window']).mean()
-                                        rolling_std = pd.Series(f_series).rolling(mr['zscore_window']).std()
+                                    if len(f_series) > mr['trading_window']:
+                                        rolling_mean = pd.Series(f_series).rolling(mr['trading_window']).mean()
+                                        rolling_std = pd.Series(f_series).rolling(mr['trading_window']).std()
                                         
                                         upper_band = rolling_mean + 2 * rolling_std
                                         lower_band = rolling_mean - 2 * rolling_std
@@ -5432,7 +5434,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                                             f"{r['half_life']:.1f} days" if r['half_life'] != np.inf else "∞",
                                             f"{r['beta']:.4f}",
                                             f"{r['current_value']:.4f}",
-                                            f"{r['z_score']:+.2f}σ"
+                                            f"{r['z_score_rolling']:+.2f}σ"
                                         ]
                                     }
                                     st.markdown(create_styled_table(pd.DataFrame(params_data)), unsafe_allow_html=True)
@@ -5462,7 +5464,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                                             **✅ PC{k+1} is tradable!**
                                             
                                             - Half-life: {r['half_life']:.1f} days (fast enough)
-                                            - Current Z: {r['z_score']:+.2f}σ
+                                            - Current Z: {r['z_score_rolling']:+.2f}σ
                                             
                                             This factor represents **relative deviations** that 
                                             historically correct within {r['half_life']*2:.0f} days.
@@ -5526,7 +5528,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         """)
                         
                         # Find tradable signals (mean-reverting factors with |Z| > 1.5)
-                        tradable_signals = [r for r in ou_results[1:] if r['is_mean_reverting'] and abs(r['z_score']) > 1.5]
+                        tradable_signals = [r for r in ou_results[1:] if r['is_mean_reverting'] and abs(r['z_score_rolling']) > 1.5]
                         
                         if not tradable_signals:
                             st.info("""
@@ -5540,7 +5542,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         else:
                             for signal in tradable_signals:
                                 k = signal['pc'] - 1  # 0-indexed
-                                z = signal['z_score']
+                                z = signal['z_score_rolling']
                                 hl = signal['half_life']
                                 
                                 # Determine signal direction
@@ -5664,9 +5666,9 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                                 r = ou_results[k]
                                 if r['is_mean_reverting']:
                                     # Contribution = |loading| * |z_score|
-                                    contrib = abs(loadings[i, k]) * abs(r['z_score'])
+                                    contrib = abs(loadings[i, k]) * abs(r['z_score_rolling'])
                                     total_deviation += contrib
-                                    deviation_details[f'PC{k+1}'] = loadings[i, k] * r['z_score']
+                                    deviation_details[f'PC{k+1}'] = loadings[i, k] * r['z_score_rolling']
                             
                             # Direction: is asset expected to go up or down?
                             expected_direction = 0
@@ -5766,7 +5768,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             selected_factor = st.selectbox(
                                 "Select factor to construct portfolio",
                                 options=[r['pc'] for r in tradable_factors],
-                                format_func=lambda x: f"PC{x} (Half-life: {ou_results[x-1]['half_life']:.1f}d, Z: {ou_results[x-1]['z_score']:+.2f}σ)",
+                                format_func=lambda x: f"PC{x} (Half-life: {ou_results[x-1]['half_life']:.1f}d, Z: {ou_results[x-1]['z_score_rolling']:+.2f}σ)",
                                 key="factor_portfolio"
                             )
                             
@@ -5777,7 +5779,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             weights = factor_loadings / np.sum(np.abs(factor_loadings))
                             
                             # Determine position based on current Z
-                            z_current = ou_results[k]['z_score']
+                            z_current = ou_results[k]['z_score_rolling']
                             
                             if z_current > 1.5:
                                 position = "SHORT the factor portfolio"
@@ -5870,11 +5872,11 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                             findings.append(f"Fastest mean-reversion: PC{fastest['pc']} with half-life {fastest['half_life']:.1f} days")
                         
                         # 3. Active signals
-                        active_signals = [r for r in ou_results[1:] if r['is_mean_reverting'] and abs(r['z_score']) > 2]
+                        active_signals = [r for r in ou_results[1:] if r['is_mean_reverting'] and abs(r['z_score_rolling']) > 2]
                         if active_signals:
                             for sig in active_signals:
-                                direction = "SHORT" if sig['z_score'] > 0 else "LONG"
-                                recommendations.append(f"🚨 **Active signal on PC{sig['pc']}**: {direction} (Z = {sig['z_score']:+.2f}σ)")
+                                direction = "SHORT" if sig['z_score_rolling'] > 0 else "LONG"
+                                recommendations.append(f"🚨 **Active signal on PC{sig['pc']}**: {direction} (Z = {sig['z_score_rolling']:+.2f}σ)")
                         else:
                             findings.append("No strong trading signals at the moment (all |Z| < 2)")
                         
