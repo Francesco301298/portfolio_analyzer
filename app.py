@@ -24,7 +24,6 @@ from core.optimization import run_walk_forward_analysis
 from core.optimization import get_hrp_dendrogram_data
 from core.optimization import cvar_optimization
 from core.optimization import compute_portfolio_cvar
-##from core.optimization import compute_portfolio_cvar_fast
 
 from core.statistics import compute_autocorrelation
 from core.statistics import invariance_test_ellipsoid
@@ -43,6 +42,9 @@ from core.rebalancing import calculate_all_portfolios_with_costs
 from core.backtesting import combinatorial_purged_cv
 from core.backtesting import run_cpcv_backtest
 from core.backtesting import compute_pbo
+
+from econometrics.backtesting import PCAOUBacktester, BacktestConfig, BacktestResults
+
 
 warnings.filterwarnings('ignore')
 
@@ -5923,6 +5925,1053 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                         
                         📖 *Methodology based on: Avellaneda & Lee (2010), Meucci (2009), Alexander (2001)*
                         """)
+
+                        # ════════════════════════════════════════════════════════════════════════════════
+                        # SECTION 8: BACKTESTING & VALIDATION
+                        # ════════════════════════════════════════════════════════════════════════════════
+
+                        st.markdown("---")
+                        st.markdown("## 🔬 Backtesting & Validation")
+
+                        st.markdown("""
+                        This section validates the PCA-OU model by simulating how it would have performed historically.
+
+                        **The Question:** *"If I had followed these signals in the past, would I have beaten buy & hold?"*
+
+                        **Methodology:**
+                        - **Walk-forward testing**: Parameters are re-estimated periodically (no look-ahead bias)
+                        - **Realistic costs**: Transaction costs are deducted at each rebalance
+                        - **Regime-aware**: Position sizing adjusts based on HMM regime
+                        """)
+
+                        with st.expander("📚 Backtesting Methodology", expanded=False):
+                            st.markdown(r"""
+                            #### Walk-Forward Framework
+                            
+                            Unlike simple backtests that fit on all data and then test on the same data (in-sample bias),
+                            we use a **walk-forward** approach:
+                            
+                            ```
+                            |-------- Estimation Window --------|--- Trade ---|
+                            |         Fit PCA + O-U + HMM       |   Execute   |
+                                                                
+                                    ↓ Roll forward by rebalance_freq days ↓
+                            
+                                |-------- Estimation Window --------|--- Trade ---|
+                            ```
+                            
+                            #### Strategy Logic
+                            
+                            1. **Base Portfolio**: Equal-weight across all assets
+                            
+                            2. **Signal Generation**: For each factor PC_k (k ≥ 2):
+                            - If $|Z_k| > Z_{entry}$ and factor is mean-reverting → Generate signal
+                            - Signal direction: Opposite to Z-score (mean reversion)
+                            
+                            3. **Weight Adjustment**:
+                            $$w_i = w_i^{EW} + \sum_{k=2}^{K} \text{tilt}_k \cdot \text{loading}_{i,k}$$
+                            
+                            Where tilt depends on Z-score magnitude and regime.
+                            
+                            4. **Regime Filter**:
+                            - Calm: Full tilt (100%)
+                            - Normal: Reduced tilt (70%)
+                            - Panic: Minimal tilt (30%)
+                            
+                            #### References
+                            
+                            - López de Prado, M. (2018). *Advances in Financial Machine Learning*
+                            - Bailey, D. & López de Prado, M. (2014). "The Deflated Sharpe Ratio"
+                            - Avellaneda, M. & Lee, J.H. (2010). "Statistical Arbitrage in the US Equities Market"
+                            """)
+
+                        st.markdown("---")
+
+                        # ════════════════════════════════════════════════════════════════════════════════
+                        # CONFIGURATION
+                        # ════════════════════════════════════════════════════════════════════════════════
+
+                        st.markdown("### ⚙️ Backtest Configuration")
+
+                        # Check if we have the required data
+                        if 'mr_results' not in st.session_state or st.session_state.mr_results is None:
+                            st.warning("""
+                            **⚠️ Run PCA Mean-Reversion Analysis First**
+                            
+                            Please run the analysis above before backtesting. The backtest uses the same 
+                            assets and validates the model's predictive power.
+                            """)
+
+                        else:
+                            mr = st.session_state.mr_results
+                            backtest_assets = mr['assets']
+                            n_assets = len(backtest_assets)
+                            
+                            st.info(f"**Assets for backtest:** {', '.join([get_display_name(a) for a in backtest_assets])}")
+                            
+                            # Configuration columns
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                st.markdown("##### 📊 Estimation Settings")
+                                
+                                bt_estimation_window = st.slider(
+                                    "Estimation Window (days)",
+                                    min_value=126,
+                                    max_value=504,
+                                    value=mr.get('estimation_window', 252),
+                                    step=21,
+                                    help="Historical window for PCA/O-U parameter estimation",
+                                    key="bt_estimation_window"
+                                )
+                                st.caption(f"≈ {bt_estimation_window/252:.1f} years")
+                                
+                                bt_reestimation_freq = st.slider(
+                                    "Re-estimation Frequency (days)",
+                                    min_value=5,
+                                    max_value=63,
+                                    value=21,
+                                    step=5,
+                                    help="How often to re-fit PCA and O-U models",
+                                    key="bt_reestimation_freq"
+                                )
+                                st.caption(f"≈ {bt_reestimation_freq/21:.1f} months")
+                            
+                            with col2:
+                                st.markdown("##### 📡 Trading Settings")
+                                
+                                bt_rebalance_freq = st.selectbox(
+                                    "Rebalancing Frequency",
+                                    options=[1, 5, 10, 21],
+                                    index=1,  # Default: weekly
+                                    format_func=lambda x: {1: "Daily", 5: "Weekly", 10: "Bi-weekly", 21: "Monthly"}[x],
+                                    help="How often to rebalance portfolio weights",
+                                    key="bt_rebalance_freq"
+                                )
+                                
+                                bt_z_entry = st.slider(
+                                    "Z-Score Entry Threshold",
+                                    min_value=1.0,
+                                    max_value=3.0,
+                                    value=mr.get('zscore_threshold', 2.0),
+                                    step=0.25,
+                                    help="Minimum |Z| to generate a signal",
+                                    key="bt_z_entry"
+                                )
+                                
+                                bt_z_exit = st.slider(
+                                    "Z-Score Exit Threshold",
+                                    min_value=0.0,
+                                    max_value=1.5,
+                                    value=0.5,
+                                    step=0.25,
+                                    help="Exit position when |Z| falls below this",
+                                    key="bt_z_exit"
+                                )
+                            
+                            with col3:
+                                st.markdown("##### 💰 Cost & Risk Settings")
+                                
+                                bt_transaction_cost = st.slider(
+                                    "Transaction Cost (bps)",
+                                    min_value=0,
+                                    max_value=50,
+                                    value=10,
+                                    step=5,
+                                    help="Round-trip transaction cost in basis points",
+                                    key="bt_transaction_cost"
+                                )
+                                st.caption(f"{bt_transaction_cost} bps = {bt_transaction_cost/100:.2f}%")
+                                
+                                bt_max_tilt = st.slider(
+                                    "Max Tilt per Asset (%)",
+                                    min_value=5,
+                                    max_value=30,
+                                    value=15,
+                                    step=5,
+                                    help="Maximum deviation from equal weight",
+                                    key="bt_max_tilt"
+                                )
+                                
+                                bt_min_weight = st.slider(
+                                    "Min Weight per Asset (%)",
+                                    min_value=0,
+                                    max_value=10,
+                                    value=5,
+                                    step=1,
+                                    help="Minimum weight (0% allows full short)",
+                                    key="bt_min_weight"
+                                )
+
+                            # Advanced settings
+                            with st.expander("🔬 Advanced Settings", expanded=False):
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    bt_use_hmm = st.checkbox(
+                                        "Use HMM Regime Filter",
+                                        value=True,
+                                        help="Reduce position sizing in Panic regime",
+                                        key="bt_use_hmm"
+                                    )
+                                    
+                                    if bt_use_hmm:
+                                        bt_n_regimes = st.radio(
+                                            "Number of Regimes",
+                                            options=[2, 3],
+                                            index=0,
+                                            format_func=lambda x: "2 (Calm/Panic)" if x == 2 else "3 (Calm/Normal/Panic)",
+                                            horizontal=True,
+                                            key="bt_n_regimes"
+                                        )
+                                        
+                                        bt_panic_factor = st.slider(
+                                            "Panic Regime Factor",
+                                            min_value=0.0,
+                                            max_value=0.5,
+                                            value=0.3,
+                                            step=0.1,
+                                            help="Position multiplier in Panic regime",
+                                            key="bt_panic_factor"
+                                        )
+                                    else:
+                                        bt_n_regimes = 2
+                                        bt_panic_factor = 0.3
+                                
+                                with col2:
+                                    bt_n_components = st.slider(
+                                        "Number of PCs to Trade",
+                                        min_value=2,
+                                        max_value=min(n_assets, 10),
+                                        value=min(mr.get('n_components', 5), n_assets),
+                                        help="Number of principal components (PC1 is excluded from trading)",
+                                        key="bt_n_components"
+                                    )
+                                    
+                                    bt_max_weight = st.slider(
+                                        "Max Weight per Asset (%)",
+                                        min_value=20,
+                                        max_value=50,
+                                        value=40,
+                                        step=5,
+                                        help="Maximum weight to prevent concentration",
+                                        key="bt_max_weight"
+                                    )
+
+                            st.markdown("---")
+
+                            # ════════════════════════════════════════════════════════════════════════════════
+                            # RUN BACKTEST
+                            # ════════════════════════════════════════════════════════════════════════════════
+                            
+                            if st.button("🚀 Run Backtest", use_container_width=True, type="primary", key="run_backtest"):
+                                
+                                # Import backtesting module
+                                try:
+                                    from econometrics.backtesting import PCAOUBacktester, BacktestConfig
+                                except ImportError:
+                                    st.error("""
+                                    **❌ Backtesting module not found!**
+                                    
+                                    Please ensure the `core/backtesting/` folder is in your project with:
+                                    - `__init__.py`
+                                    - `engine.py`
+                                    - `metrics.py`
+                                    """)
+                                    st.stop()
+                                
+                                with st.spinner("Running walk-forward backtest... This may take a minute."):
+                                    
+                                    try:
+                                        # Prepare price data
+                                        prices_df = analyzer.data[backtest_assets].dropna()
+                                        
+                                        # Check data sufficiency
+                                        min_required = bt_estimation_window + 252  # At least 1 year of testing
+                                        if len(prices_df) < min_required:
+                                            st.error(f"""
+                                            **❌ Insufficient data**
+                                            
+                                            Need at least {min_required} days of data, but only have {len(prices_df)}.
+                                            Reduce estimation window or select assets with longer history.
+                                            """)
+                                            st.stop()
+                                        
+                                        # Create configuration
+                                        config = BacktestConfig(
+                                            estimation_window=bt_estimation_window,
+                                            reestimation_freq=bt_reestimation_freq,
+                                            rebalance_freq=bt_rebalance_freq,
+                                            n_components=bt_n_components,
+                                            z_entry=bt_z_entry,
+                                            z_exit=bt_z_exit,
+                                            transaction_cost_bps=float(bt_transaction_cost),
+                                            min_weight=bt_min_weight / 100,
+                                            max_weight=bt_max_weight / 100,
+                                            use_hmm=bt_use_hmm,
+                                            n_regimes=bt_n_regimes,
+                                            regime_panic_factor=bt_panic_factor,
+                                            max_tilt=bt_max_tilt / 100
+                                        )
+                                        
+                                        # Run backtest
+                                        backtester = PCAOUBacktester(prices_df, config, asset_names=backtest_assets)
+                                        results = backtester.run()
+                                        
+                                        # Store results
+                                        st.session_state.backtest_results = results
+                                        
+                                        st.success("✅ Backtest completed successfully!")
+                                        
+                                    except Exception as e:
+                                        st.error(f"❌ Backtest failed: {str(e)}")
+                                        import traceback
+                                        with st.expander("🔍 Error Details"):
+                                            st.code(traceback.format_exc())
+                                        st.stop()
+
+                            # ════════════════════════════════════════════════════════════════════════════════
+                            # DISPLAY RESULTS
+                            # ════════════════════════════════════════════════════════════════════════════════
+                            
+                            if 'backtest_results' in st.session_state and st.session_state.backtest_results is not None:
+                                
+                                results = st.session_state.backtest_results
+                                metrics = results.metrics
+                                
+                                st.markdown("---")
+                                
+                                # ════════════════════════════════════════════════════════════════════════════
+                                # KEY RESULTS SUMMARY
+                                # ════════════════════════════════════════════════════════════════════════════
+                                
+                                st.markdown("## 📊 Key Results")
+                                
+                                # Determine if strategy beat benchmark
+                                excess_return = metrics['excess_return']
+                                strategy_won = excess_return > 0
+                                
+                                if strategy_won and metrics['sharpe_strategy'] > metrics['sharpe_benchmark']:
+                                    st.success(f"""
+                                    **✅ Strategy OUTPERFORMED Benchmark**
+                                    
+                                    The PCA-OU model generated **{excess_return*100:+.2f}%** excess return 
+                                    with better risk-adjusted performance (Sharpe: {metrics['sharpe_strategy']:.2f} vs {metrics['sharpe_benchmark']:.2f}).
+                                    """)
+                                elif strategy_won:
+                                    st.info(f"""
+                                    **📈 Strategy beat benchmark on returns, but not risk-adjusted**
+                                    
+                                    Excess return: **{excess_return*100:+.2f}%**, but Sharpe ratio is lower 
+                                    ({metrics['sharpe_strategy']:.2f} vs {metrics['sharpe_benchmark']:.2f}).
+                                    """)
+                                else:
+                                    st.warning(f"""
+                                    **⚠️ Strategy UNDERPERFORMED Benchmark**
+                                    
+                                    The strategy returned **{excess_return*100:+.2f}%** less than buy & hold.
+                                    This may indicate the model needs parameter tuning or is not suitable for these assets.
+                                    """)
+                                
+                                # KPI Cards
+                                col1, col2, col3, col4 = st.columns(4)
+                                
+                                with col1:
+                                    st.metric(
+                                        "Total Return",
+                                        f"{metrics['total_return_strategy']*100:.1f}%",
+                                        f"{excess_return*100:+.1f}% vs B&H",
+                                        delta_color="normal" if excess_return > 0 else "inverse"
+                                    )
+                                
+                                with col2:
+                                    st.metric(
+                                        "Sharpe Ratio",
+                                        f"{metrics['sharpe_strategy']:.2f}",
+                                        f"{metrics['sharpe_strategy'] - metrics['sharpe_benchmark']:+.2f} vs B&H",
+                                        delta_color="normal" if metrics['sharpe_strategy'] > metrics['sharpe_benchmark'] else "inverse"
+                                    )
+                                
+                                with col3:
+                                    st.metric(
+                                        "Max Drawdown",
+                                        f"{metrics['max_drawdown_strategy']*100:.1f}%",
+                                        f"{(metrics['max_drawdown_strategy'] - metrics['max_drawdown_benchmark'])*100:+.1f}% vs B&H",
+                                        delta_color="inverse" if metrics['max_drawdown_strategy'] < metrics['max_drawdown_benchmark'] else "normal"
+                                    )
+                                
+                                with col4:
+                                    st.metric(
+                                        "Alpha (Annual)",
+                                        f"{metrics['alpha']*100:+.2f}%",
+                                        "Significant" if abs(metrics['alpha']) > 0.02 else "Not significant",
+                                        delta_color="normal" if metrics['alpha'] > 0 else "inverse"
+                                    )
+                                
+                                st.markdown("---")
+                                
+                                # ════════════════════════════════════════════════════════════════════════════
+                                # EQUITY CURVES
+                                # ════════════════════════════════════════════════════════════════════════════
+                                
+                                st.markdown("## 📈 Equity Curves")
+                                
+                                tab_equity, tab_drawdown, tab_rolling = st.tabs([
+                                    "📈 Cumulative Returns", 
+                                    "📉 Drawdowns",
+                                    "📊 Rolling Metrics"
+                                ])
+                                
+                                with tab_equity:
+                                    # Main equity chart
+                                    fig_equity = go.Figure()
+                                    
+                                    # Strategy
+                                    fig_equity.add_trace(go.Scatter(
+                                        x=results.dates,
+                                        y=results.strategy_equity,
+                                        mode='lines',
+                                        name='PCA-OU Strategy',
+                                        line=dict(color='#4ECDC4', width=2.5),
+                                        hovertemplate='Date: %{x}<br>Value: %{y:.3f}<br>Return: %{customdata:.1%}<extra></extra>',
+                                        customdata=results.strategy_equity - 1
+                                    ))
+                                    
+                                    # Benchmark
+                                    fig_equity.add_trace(go.Scatter(
+                                        x=results.dates,
+                                        y=results.benchmark_equity,
+                                        mode='lines',
+                                        name='Buy & Hold (Equal Weight)',
+                                        line=dict(color='#6366F1', width=2, dash='dash'),
+                                        hovertemplate='Date: %{x}<br>Value: %{y:.3f}<br>Return: %{customdata:.1%}<extra></extra>',
+                                        customdata=results.benchmark_equity - 1
+                                    ))
+                                    
+                                    # Shade regime periods if HMM was used
+                                    if results.config.use_hmm:
+                                        # Find regime changes
+                                        regime_changes = results.regimes != results.regimes.shift(1)
+                                        change_dates = results.regimes.index[regime_changes]
+                                        
+                                        # Add subtle shading for Panic periods
+                                        in_panic = False
+                                        panic_start = None
+                                        
+                                        for date in results.dates:
+                                            regime = results.regimes.get(date, 'Calm')
+                                            
+                                            if regime == 'Panic' and not in_panic:
+                                                panic_start = date
+                                                in_panic = True
+                                            elif regime != 'Panic' and in_panic:
+                                                fig_equity.add_vrect(
+                                                    x0=panic_start, x1=date,
+                                                    fillcolor="rgba(255, 107, 107, 0.1)",
+                                                    layer="below",
+                                                    line_width=0
+                                                )
+                                                in_panic = False
+                                        
+                                        # Close final panic period if still in it
+                                        if in_panic:
+                                            fig_equity.add_vrect(
+                                                x0=panic_start, x1=results.dates[-1],
+                                                fillcolor="rgba(255, 107, 107, 0.1)",
+                                                layer="below",
+                                                line_width=0
+                                            )
+                                    
+                                    fig_equity.update_layout(
+                                        height=450,
+                                        title="Cumulative Performance: Strategy vs Benchmark",
+                                        xaxis_title="Date",
+                                        yaxis_title="Portfolio Value ($1 invested)",
+                                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+                                        hovermode='x unified'
+                                    )
+                                    fig_equity = apply_plotly_theme(fig_equity)
+                                    st.plotly_chart(fig_equity, use_container_width=True)
+                                    
+                                    if results.config.use_hmm:
+                                        st.caption("🔴 Shaded areas indicate PANIC regime (reduced position sizing)")
+                                
+                                with tab_drawdown:
+                                    # Drawdown chart
+                                    def compute_drawdown_series(equity):
+                                        rolling_max = equity.expanding().max()
+                                        return equity / rolling_max - 1
+                                    
+                                    strat_dd = compute_drawdown_series(results.strategy_equity)
+                                    bench_dd = compute_drawdown_series(results.benchmark_equity)
+                                    
+                                    fig_dd = go.Figure()
+                                    
+                                    fig_dd.add_trace(go.Scatter(
+                                        x=results.dates,
+                                        y=strat_dd * 100,
+                                        mode='lines',
+                                        name='Strategy Drawdown',
+                                        line=dict(color='#4ECDC4', width=2),
+                                        fill='tozeroy',
+                                        fillcolor='rgba(78, 205, 196, 0.3)',
+                                        hovertemplate='Date: %{x}<br>Drawdown: %{y:.1f}%<extra></extra>'
+                                    ))
+                                    
+                                    fig_dd.add_trace(go.Scatter(
+                                        x=results.dates,
+                                        y=bench_dd * 100,
+                                        mode='lines',
+                                        name='Benchmark Drawdown',
+                                        line=dict(color='#6366F1', width=2, dash='dash'),
+                                        hovertemplate='Date: %{x}<br>Drawdown: %{y:.1f}%<extra></extra>'
+                                    ))
+                                    
+                                    fig_dd.update_layout(
+                                        height=350,
+                                        title="Drawdown Comparison",
+                                        xaxis_title="Date",
+                                        yaxis_title="Drawdown (%)",
+                                        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                                        hovermode='x unified'
+                                    )
+                                    fig_dd = apply_plotly_theme(fig_dd)
+                                    st.plotly_chart(fig_dd, use_container_width=True)
+                                    
+                                    # Drawdown statistics
+                                    col1, col2 = st.columns(2)
+                                    
+                                    with col1:
+                                        st.markdown("##### Strategy Drawdowns")
+                                        st.markdown(f"- **Max Drawdown:** {metrics['max_drawdown_strategy']*100:.1f}%")
+                                        st.markdown(f"- **Average Drawdown:** {strat_dd.mean()*100:.1f}%")
+                                        st.markdown(f"- **Days in Drawdown:** {(strat_dd < 0).sum()} ({(strat_dd < 0).mean()*100:.0f}%)")
+                                    
+                                    with col2:
+                                        st.markdown("##### Benchmark Drawdowns")
+                                        st.markdown(f"- **Max Drawdown:** {metrics['max_drawdown_benchmark']*100:.1f}%")
+                                        st.markdown(f"- **Average Drawdown:** {bench_dd.mean()*100:.1f}%")
+                                        st.markdown(f"- **Days in Drawdown:** {(bench_dd < 0).sum()} ({(bench_dd < 0).mean()*100:.0f}%)")
+                                
+                                with tab_rolling:
+                                    # Rolling Sharpe ratio
+                                    window = 63  # ~3 months
+                                    
+                                    rolling_sharpe_strat = results.strategy_returns.rolling(window).apply(
+                                        lambda x: np.sqrt(252) * x.mean() / x.std() if x.std() > 0 else 0
+                                    )
+                                    rolling_sharpe_bench = results.benchmark_returns.rolling(window).apply(
+                                        lambda x: np.sqrt(252) * x.mean() / x.std() if x.std() > 0 else 0
+                                    )
+                                    
+                                    fig_rolling = go.Figure()
+                                    
+                                    fig_rolling.add_trace(go.Scatter(
+                                        x=results.dates,
+                                        y=rolling_sharpe_strat,
+                                        mode='lines',
+                                        name='Strategy (63-day)',
+                                        line=dict(color='#4ECDC4', width=2)
+                                    ))
+                                    
+                                    fig_rolling.add_trace(go.Scatter(
+                                        x=results.dates,
+                                        y=rolling_sharpe_bench,
+                                        mode='lines',
+                                        name='Benchmark (63-day)',
+                                        line=dict(color='#6366F1', width=2, dash='dash')
+                                    ))
+                                    
+                                    fig_rolling.add_hline(y=0, line_dash="dot", line_color="rgba(255,255,255,0.3)")
+                                    fig_rolling.add_hline(y=1, line_dash="dot", line_color="#FFE66D", 
+                                                        annotation_text="Good (SR=1)")
+                                    fig_rolling.add_hline(y=2, line_dash="dot", line_color="#4ECDC4",
+                                                        annotation_text="Excellent (SR=2)")
+                                    
+                                    fig_rolling.update_layout(
+                                        height=350,
+                                        title="Rolling Sharpe Ratio (63-day window)",
+                                        xaxis_title="Date",
+                                        yaxis_title="Sharpe Ratio",
+                                        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                                        hovermode='x unified'
+                                    )
+                                    fig_rolling = apply_plotly_theme(fig_rolling)
+                                    st.plotly_chart(fig_rolling, use_container_width=True)
+                                    
+                                    # Percentage of time strategy beat benchmark
+                                    strat_better = (rolling_sharpe_strat > rolling_sharpe_bench).mean() * 100
+                                    st.metric(
+                                        "Strategy had higher rolling Sharpe",
+                                        f"{strat_better:.0f}% of the time"
+                                    )
+                                
+                                st.markdown("---")
+                                
+                                # ════════════════════════════════════════════════════════════════════════════
+                                # PERFORMANCE METRICS TABLE
+                                # ════════════════════════════════════════════════════════════════════════════
+                                
+                                st.markdown("## 📋 Performance Metrics")
+                                
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    st.markdown("##### Returns & Risk")
+                                    
+                                    returns_data = {
+                                        'Metric': [
+                                            'Total Return',
+                                            'Annualized Return',
+                                            'Annualized Volatility',
+                                            'Max Drawdown',
+                                            'VaR (95%, daily)',
+                                            'CVaR (95%, daily)'
+                                        ],
+                                        'Strategy': [
+                                            f"{metrics['total_return_strategy']*100:.2f}%",
+                                            f"{metrics['ann_return_strategy']*100:.2f}%",
+                                            f"{metrics['ann_vol_strategy']*100:.2f}%",
+                                            f"{metrics['max_drawdown_strategy']*100:.2f}%",
+                                            f"{metrics['var_95_strategy']*100:.2f}%",
+                                            f"{metrics['cvar_95_strategy']*100:.2f}%"
+                                        ],
+                                        'Benchmark': [
+                                            f"{metrics['total_return_benchmark']*100:.2f}%",
+                                            f"{metrics['ann_return_benchmark']*100:.2f}%",
+                                            f"{metrics['ann_vol_benchmark']*100:.2f}%",
+                                            f"{metrics['max_drawdown_benchmark']*100:.2f}%",
+                                            f"{metrics['var_95_benchmark']*100:.2f}%",
+                                            f"{metrics['cvar_95_benchmark']*100:.2f}%"
+                                        ]
+                                    }
+                                    st.markdown(create_styled_table(pd.DataFrame(returns_data)), unsafe_allow_html=True)
+                                
+                                with col2:
+                                    st.markdown("##### Risk-Adjusted Metrics")
+                                    
+                                    risk_adj_data = {
+                                        'Metric': [
+                                            'Sharpe Ratio',
+                                            'Sortino Ratio',
+                                            'Calmar Ratio',
+                                            'Information Ratio',
+                                            'Alpha (annual)',
+                                            'Beta'
+                                        ],
+                                        'Strategy': [
+                                            f"{metrics['sharpe_strategy']:.3f}",
+                                            f"{metrics['sortino_strategy']:.3f}",
+                                            f"{metrics['calmar_strategy']:.3f}",
+                                            f"{metrics['information_ratio']:.3f}",
+                                            f"{metrics['alpha']*100:+.2f}%",
+                                            f"{metrics['beta']:.3f}"
+                                        ],
+                                        'Benchmark': [
+                                            f"{metrics['sharpe_benchmark']:.3f}",
+                                            f"{metrics.get('sortino_benchmark', metrics['sharpe_benchmark']):.3f}",
+                                            f"{metrics['calmar_benchmark']:.3f}",
+                                            "—",
+                                            "0.00%",
+                                            "1.000"
+                                        ]
+                                    }
+                                    st.markdown(create_styled_table(pd.DataFrame(risk_adj_data)), unsafe_allow_html=True)
+                                
+                                st.markdown("---")
+                                
+                                # ════════════════════════════════════════════════════════════════════════════
+                                # TRADE ANALYSIS
+                                # ════════════════════════════════════════════════════════════════════════════
+                                
+                                st.markdown("## 🎯 Trade & Signal Analysis")
+                                
+                                col1, col2, col3, col4 = st.columns(4)
+                                
+                                with col1:
+                                    st.metric("Total Trades", f"{metrics['n_trades']}")
+                                
+                                with col2:
+                                    st.metric("Win Rate", f"{metrics['win_rate']*100:.1f}%")
+                                
+                                with col3:
+                                    st.metric("Avg Turnover", f"{metrics['avg_turnover']*100:.1f}%")
+                                
+                                with col4:
+                                    st.metric("Total Tx Costs", f"{metrics['total_tx_costs']*100:.2f}%")
+                                
+                                # Signal analysis tabs
+                                tab_signals, tab_regimes, tab_trades = st.tabs([
+                                    "📡 Signal Performance",
+                                    "🌡️ Regime Analysis", 
+                                    "📋 Trade Log"
+                                ])
+                                
+                                with tab_signals:
+                                    st.markdown("##### Z-Score Signals Over Time")
+                                    
+                                    # Plot Z-scores for PC2 and PC3 (main trading factors)
+                                    fig_signals = go.Figure()
+                                    
+                                    for k in range(1, min(4, results.config.n_components)):  # PC2, PC3, PC4
+                                        fig_signals.add_trace(go.Scatter(
+                                            x=results.dates,
+                                            y=results.signals_history[f'PC{k+1}'],
+                                            mode='lines',
+                                            name=f'PC{k+1} Z-score',
+                                            line=dict(width=1.5),
+                                            opacity=0.8
+                                        ))
+                                    
+                                    # Entry thresholds
+                                    fig_signals.add_hline(y=results.config.z_entry, line_dash="dash", 
+                                                        line_color="#FF6B6B", annotation_text=f"Short Entry (+{results.config.z_entry}σ)")
+                                    fig_signals.add_hline(y=-results.config.z_entry, line_dash="dash",
+                                                        line_color="#4ECDC4", annotation_text=f"Long Entry (-{results.config.z_entry}σ)")
+                                    fig_signals.add_hline(y=0, line_dash="dot", line_color="rgba(255,255,255,0.3)")
+                                    
+                                    fig_signals.update_layout(
+                                        height=350,
+                                        title="Factor Z-Scores (Trading Signals)",
+                                        xaxis_title="Date",
+                                        yaxis_title="Z-Score (σ)",
+                                        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                                        hovermode='x unified'
+                                    )
+                                    fig_signals = apply_plotly_theme(fig_signals)
+                                    st.plotly_chart(fig_signals, use_container_width=True)
+                                    
+                                    # Signal frequency analysis
+                                    st.markdown("##### Signal Frequency by Factor")
+                                    
+                                    signal_counts = []
+                                    for k in range(1, results.config.n_components):
+                                        z_series = results.signals_history[f'PC{k+1}']
+                                        n_long = (z_series < -results.config.z_entry).sum()
+                                        n_short = (z_series > results.config.z_entry).sum()
+                                        
+                                        signal_counts.append({
+                                            'Factor': f'PC{k+1}',
+                                            'Long Signals': n_long,
+                                            'Short Signals': n_short,
+                                            'Total Signals': n_long + n_short,
+                                            'Signal Rate': f"{(n_long + n_short) / len(z_series) * 100:.1f}%"
+                                        })
+                                    
+                                    st.markdown(create_styled_table(pd.DataFrame(signal_counts)), unsafe_allow_html=True)
+                                
+                                with tab_regimes:
+                                    if results.config.use_hmm:
+                                        st.markdown("##### Performance by Regime")
+                                        
+                                        # Compute regime-specific metrics
+                                        from econometrics.backtesting import compute_regime_performance
+                                        
+                                        regime_perf = compute_regime_performance(
+                                            results.strategy_returns,
+                                            results.benchmark_returns,
+                                            results.regimes
+                                        )
+                                        
+                                        if len(regime_perf) > 0:
+                                            # Format for display
+                                            regime_display = regime_perf.copy()
+                                            regime_display['strategy_return'] = regime_display['strategy_return'].apply(lambda x: f"{x*100:.1f}%")
+                                            regime_display['benchmark_return'] = regime_display['benchmark_return'].apply(lambda x: f"{x*100:.1f}%")
+                                            regime_display['excess_return'] = regime_display['excess_return'].apply(lambda x: f"{x*100:+.1f}%")
+                                            regime_display['strategy_vol'] = regime_display['strategy_vol'].apply(lambda x: f"{x*100:.1f}%")
+                                            regime_display['strategy_sharpe'] = regime_display['strategy_sharpe'].apply(lambda x: f"{x:.2f}")
+                                            regime_display['pct_time'] = regime_display['pct_time'].apply(lambda x: f"{x:.1f}%")
+                                            
+                                            regime_display = regime_display.rename(columns={
+                                                'regime': 'Regime',
+                                                'n_days': 'Days',
+                                                'pct_time': '% Time',
+                                                'strategy_return': 'Strategy Return (ann)',
+                                                'benchmark_return': 'Benchmark Return (ann)',
+                                                'excess_return': 'Excess Return',
+                                                'strategy_vol': 'Strategy Vol',
+                                                'strategy_sharpe': 'Strategy Sharpe'
+                                            })
+                                            
+                                            st.markdown(create_styled_table(regime_display[['Regime', 'Days', '% Time', 
+                                                                                            'Strategy Return (ann)', 'Benchmark Return (ann)',
+                                                                                            'Excess Return', 'Strategy Sharpe']]), 
+                                                    unsafe_allow_html=True)
+                                            
+                                            # Regime timeline
+                                            st.markdown("##### Regime Timeline")
+                                            
+                                            fig_regime = go.Figure()
+                                            
+                                            # Color map
+                                            regime_colors = {'Calm': '#4ECDC4', 'Normal': '#FFE66D', 'Panic': '#FF6B6B'}
+                                            
+                                            for regime in results.regimes.unique():
+                                                mask = results.regimes == regime
+                                                fig_regime.add_trace(go.Scatter(
+                                                    x=results.dates[mask],
+                                                    y=results.strategy_returns[mask] * 100,
+                                                    mode='markers',
+                                                    name=regime,
+                                                    marker=dict(color=regime_colors.get(regime, '#6366F1'), size=4),
+                                                    hovertemplate=f'{regime}<br>Return: %{{y:.2f}}%<extra></extra>'
+                                                ))
+                                            
+                                            fig_regime.add_hline(y=0, line_dash="dot", line_color="rgba(255,255,255,0.3)")
+                                            
+                                            fig_regime.update_layout(
+                                                height=300,
+                                                title="Daily Returns by Regime",
+                                                xaxis_title="Date",
+                                                yaxis_title="Daily Return (%)",
+                                                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                                                hovermode='x unified'
+                                            )
+                                            fig_regime = apply_plotly_theme(fig_regime)
+                                            st.plotly_chart(fig_regime, use_container_width=True)
+                                            
+                                            # Key insight
+                                            calm_excess = regime_perf[regime_perf['regime'] == 'Calm']['excess_return'].values
+                                            panic_excess = regime_perf[regime_perf['regime'] == 'Panic']['excess_return'].values
+                                            
+                                            if len(calm_excess) > 0 and len(panic_excess) > 0:
+                                                if calm_excess[0] > panic_excess[0]:
+                                                    st.success(f"""
+                                                    **✅ HMM regime filter is working!**
+                                                    
+                                                    Strategy generates {calm_excess[0]*100:.1f}% excess return in Calm regime vs 
+                                                    {panic_excess[0]*100:.1f}% in Panic. The reduced position sizing in Panic 
+                                                    helps preserve capital.
+                                                    """)
+                                                else:
+                                                    st.info("""
+                                                    **ℹ️ Mixed regime performance**
+                                                    
+                                                    Strategy performance varies by regime. Consider adjusting the 
+                                                    panic factor or entry thresholds.
+                                                    """)
+                                        else:
+                                            st.info("Insufficient regime data for analysis")
+                                    else:
+                                        st.info("HMM regime filtering was not enabled for this backtest.")
+                                
+                                with tab_trades:
+                                    st.markdown("##### Recent Trades")
+                                    
+                                    if len(results.trades) > 0:
+                                        # Show last 20 trades
+                                        trades_display = []
+                                        for trade in results.trades[-20:]:
+                                            # Summarize weight changes
+                                            weight_changes = trade.weights_after - trade.weights_before
+                                            biggest_increase = np.argmax(weight_changes)
+                                            biggest_decrease = np.argmin(weight_changes)
+                                            
+                                            trades_display.append({
+                                                'Date': trade.date.strftime('%Y-%m-%d'),
+                                                'Regime': trade.regime,
+                                                'Turnover': f"{trade.turnover*100:.1f}%",
+                                                'Tx Cost': f"{trade.transaction_cost*100:.3f}%",
+                                                'Active Signals': ', '.join([f"PC{k}:{z:+.1f}σ" for k, z in trade.active_signals.items()]),
+                                                'Biggest ↑': f"{backtest_assets[biggest_increase]} (+{weight_changes[biggest_increase]*100:.1f}%)",
+                                                'Biggest ↓': f"{backtest_assets[biggest_decrease]} ({weight_changes[biggest_decrease]*100:.1f}%)"
+                                            })
+                                        
+                                        trades_df = pd.DataFrame(trades_display)
+                                        st.dataframe(trades_df, use_container_width=True, hide_index=True)
+                                        
+                                        st.caption(f"Showing last {min(20, len(results.trades))} of {len(results.trades)} total trades")
+                                    else:
+                                        st.info("No trades were executed during the backtest period.")
+                                
+                                st.markdown("---")
+                                
+                                # ════════════════════════════════════════════════════════════════════════════
+                                # STATISTICAL SIGNIFICANCE
+                                # ════════════════════════════════════════════════════════════════════════════
+                                
+                                st.markdown("## 🔬 Statistical Significance")
+                                
+                                st.markdown("""
+                                Are the results statistically significant, or could they be due to chance?
+                                We perform several tests to validate the strategy's performance.
+                                """)
+                                
+                                try:
+                                    from econometrics.backtesting import (
+                                        test_sharpe_significance,
+                                        test_strategy_vs_benchmark,
+                                        test_win_rate_significance,
+                                        bootstrap_sharpe_ci
+                                    )
+                                    
+                                    col1, col2 = st.columns(2)
+                                    
+                                    with col1:
+                                        st.markdown("##### Hypothesis Tests")
+                                        
+                                        # Test 1: Sharpe > 0
+                                        sharpe_test = test_sharpe_significance(results.strategy_returns)
+                                        
+                                        if sharpe_test.is_significant:
+                                            st.success(f"✅ **Sharpe Ratio Test:** {sharpe_test.interpretation}")
+                                        else:
+                                            st.warning(f"⚠️ **Sharpe Ratio Test:** {sharpe_test.interpretation}")
+                                        
+                                        # Test 2: Strategy vs Benchmark
+                                        bench_test = test_strategy_vs_benchmark(
+                                            results.strategy_returns,
+                                            results.benchmark_returns
+                                        )
+                                        
+                                        if bench_test.is_significant:
+                                            st.success(f"✅ **vs Benchmark Test:** {bench_test.interpretation}")
+                                        else:
+                                            st.warning(f"⚠️ **vs Benchmark Test:** {bench_test.interpretation}")
+                                        
+                                        # Test 3: Win Rate
+                                        wins = int(metrics['win_rate'] * metrics['n_trades'])
+                                        win_test = test_win_rate_significance(wins, int(metrics['n_trades']))
+                                        
+                                        if win_test.is_significant:
+                                            st.success(f"✅ **Win Rate Test:** {win_test.interpretation}")
+                                        else:
+                                            st.warning(f"⚠️ **Win Rate Test:** {win_test.interpretation}")
+                                    
+                                    with col2:
+                                        st.markdown("##### Bootstrap Confidence Intervals")
+                                        
+                                        with st.spinner("Computing bootstrap CIs..."):
+                                            lower, point, upper = bootstrap_sharpe_ci(
+                                                results.strategy_returns,
+                                                n_bootstrap=5000,
+                                                confidence_level=0.95
+                                            )
+                                        
+                                        st.markdown(f"""
+                                        **Sharpe Ratio 95% CI:** [{lower:.2f}, {upper:.2f}]
+                                        
+                                        Point estimate: **{point:.2f}**
+                                        """)
+                                        
+                                        if lower > 0:
+                                            st.success("✅ Confidence interval excludes 0 → Sharpe is significantly positive")
+                                        elif upper < 0:
+                                            st.error("❌ Confidence interval excludes 0 → Sharpe is significantly negative")
+                                        else:
+                                            st.warning("⚠️ Confidence interval includes 0 → Cannot conclude Sharpe ≠ 0")
+                                        
+                                        # Visualize CI
+                                        fig_ci = go.Figure()
+                                        
+                                        fig_ci.add_trace(go.Scatter(
+                                            x=[lower, point, upper],
+                                            y=[1, 1, 1],
+                                            mode='markers+lines',
+                                            marker=dict(size=[10, 15, 10], color=['#FF6B6B', '#4ECDC4', '#FF6B6B']),
+                                            line=dict(color='#4ECDC4', width=3),
+                                            hoverinfo='skip'
+                                        ))
+                                        
+                                        fig_ci.add_vline(x=0, line_dash="dash", line_color="rgba(255,255,255,0.5)")
+                                        
+                                        fig_ci.update_layout(
+                                            height=150,
+                                            xaxis_title="Sharpe Ratio",
+                                            yaxis=dict(visible=False),
+                                            showlegend=False,
+                                            margin=dict(t=20, b=40)
+                                        )
+                                        fig_ci = apply_plotly_theme(fig_ci)
+                                        st.plotly_chart(fig_ci, use_container_width=True)
+                                        
+                                except ImportError:
+                                    st.info("Statistical tests require the full backtesting module.")
+                                except Exception as e:
+                                    st.warning(f"Could not compute statistical tests: {str(e)}")
+                                
+                                st.markdown("---")
+                                
+                                # ════════════════════════════════════════════════════════════════════════════
+                                # CONCLUSIONS
+                                # ════════════════════════════════════════════════════════════════════════════
+                                
+                                st.markdown("## 💡 Conclusions & Recommendations")
+                                
+                                # Build conclusions based on results
+                                conclusions = []
+                                recommendations = []
+                                warnings = []
+                                
+                                # 1. Overall performance
+                                if metrics['excess_return'] > 0.05:
+                                    conclusions.append(f"✅ Strategy generated **{metrics['excess_return']*100:.1f}%** excess return over buy & hold")
+                                elif metrics['excess_return'] > 0:
+                                    conclusions.append(f"📈 Strategy slightly outperformed by **{metrics['excess_return']*100:.1f}%**")
+                                else:
+                                    conclusions.append(f"⚠️ Strategy underperformed by **{abs(metrics['excess_return'])*100:.1f}%**")
+                                    warnings.append("Consider different parameter settings or asset selection")
+                                
+                                # 2. Risk-adjusted
+                                if metrics['sharpe_strategy'] > metrics['sharpe_benchmark'] + 0.1:
+                                    conclusions.append(f"✅ Better risk-adjusted returns (Sharpe: {metrics['sharpe_strategy']:.2f} vs {metrics['sharpe_benchmark']:.2f})")
+                                elif metrics['sharpe_strategy'] < metrics['sharpe_benchmark'] - 0.1:
+                                    warnings.append("Risk-adjusted performance is worse than benchmark")
+                                
+                                # 3. Drawdowns
+                                if metrics['max_drawdown_strategy'] > metrics['max_drawdown_benchmark']:
+                                    warnings.append(f"Higher max drawdown ({metrics['max_drawdown_strategy']*100:.1f}% vs {metrics['max_drawdown_benchmark']*100:.1f}%)")
+                                else:
+                                    conclusions.append(f"✅ Lower max drawdown ({metrics['max_drawdown_strategy']*100:.1f}% vs {metrics['max_drawdown_benchmark']*100:.1f}%)")
+                                
+                                # 4. Alpha significance
+                                if metrics['alpha'] > 0.02:
+                                    conclusions.append(f"✅ Positive alpha of **{metrics['alpha']*100:.2f}%** annually")
+                                elif metrics['alpha'] < -0.02:
+                                    warnings.append(f"Negative alpha of **{metrics['alpha']*100:.2f}%** annually")
+                                
+                                # 5. Transaction costs
+                                if metrics['total_tx_costs'] > 0.02:
+                                    warnings.append(f"High transaction costs ({metrics['total_tx_costs']*100:.2f}%) - consider less frequent rebalancing")
+                                
+                                # 6. Recommendations
+                                if metrics['win_rate'] > 0.55:
+                                    recommendations.append("Signal quality is good (>55% win rate) - consider increasing position sizes")
+                                elif metrics['win_rate'] < 0.45:
+                                    recommendations.append("Low win rate (<45%) - consider stricter entry thresholds")
+                                
+                                if metrics['sharpe_strategy'] > 1.0:
+                                    recommendations.append("Strong Sharpe ratio - strategy appears robust")
+                                
+                                # Display
+                                if conclusions:
+                                    st.markdown("### Key Findings")
+                                    for c in conclusions:
+                                        st.markdown(f"- {c}")
+                                
+                                if warnings:
+                                    st.markdown("### ⚠️ Cautions")
+                                    for w in warnings:
+                                        st.warning(w)
+                                
+                                if recommendations:
+                                    st.markdown("### 📋 Recommendations")
+                                    for r in recommendations:
+                                        st.markdown(f"- {r}")
+                                
+                                # Final disclaimer
+                                st.markdown("---")
+                                st.caption("""
+                                **Important Disclaimers:**
+                                
+                                1. **Past performance ≠ future results.** This backtest shows historical performance only.
+                                2. **Transaction costs are estimates.** Real-world costs may differ due to slippage and market impact.
+                                3. **Walk-forward testing reduces but doesn't eliminate overfitting risk.**
+                                4. **This is not financial advice.** Always conduct your own due diligence.
+                                
+                                📖 *Methodology: Walk-forward backtesting with PCA-OU signals and HMM regime filtering*
+                                """)                        
                         
                         # Academic references
                         with st.expander("📚 Academic References"):
