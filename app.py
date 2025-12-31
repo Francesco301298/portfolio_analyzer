@@ -5677,7 +5677,7 @@ if st.session_state.run_analysis or st.session_state.analyzer is not None:
                                 if r['is_mean_reverting']:
                                     # If Z > 0 and loading > 0 → expect to fall
                                     # If Z < 0 and loading > 0 → expect to rise
-                                    expected_direction -= loadings[i, k] * r['z_score']
+                                    expected_direction -= loadings[i, k] * r['z_score_rolling']
                             
                             asset_deviations.append({
                                 'asset': asset,
